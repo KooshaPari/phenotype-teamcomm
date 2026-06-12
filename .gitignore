@@ -1,0 +1,24 @@
+# Cargo build artifacts
+/target
+**/*.rs.bk
+
+# Cargo.lock is NOT committed for libraries; we have 1 binary + 4 libraries
+# (1 binary, 4 libs is the "library workspace" case), so we ignore it.
+# If a future crate is a published binary we publish, flip this rule.
+Cargo.lock
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local scratch / logs
+*.log
+.env
+.env.local
