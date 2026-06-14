@@ -34,7 +34,7 @@ use crate::state::AppState;
 /// Maximum length (in bytes) we are willing to read for a single
 /// request line. Generous in M0; M1 will tighten this once we have a
 /// payload-size policy.
-const MAX_LINE_BYTES: usize = 1 * 1024 * 1024; // 1 MiB
+const MAX_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
 
 /// How long an idle connection may sit before we close it.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -61,8 +61,7 @@ pub async fn run(
     });
 
     // Track in-flight connection tasks so we can join them on shutdown.
-    let inflight: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>> =
-        Arc::new(Mutex::new(Vec::new()));
+    let inflight: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>> = Arc::new(Mutex::new(Vec::new()));
 
     loop {
         tokio::select! {
@@ -122,9 +121,8 @@ pub async fn run(
 fn bind_socket(path: &Path) -> Result<UnixListener> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create socket parent {}", parent.display())
-            })?;
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create socket parent {}", parent.display()))?;
         }
     }
     if path.exists() {
@@ -268,15 +266,22 @@ async fn handle_connection(stream: UnixStream, state: AppState) {
 
 /// Dispatch a single method name to its M0 handler. Any method that is
 /// not in the M0 surface returns `MethodNotFound`.
-async fn dispatch(
-    method: &str,
-    params: Value,
-    state: AppState,
-) -> Result<Value, TeamcommError> {
+async fn dispatch(method: &str, params: Value, state: AppState) -> Result<Value, TeamcommError> {
     match method {
         "session.register" => handlers::handle_session_register(state, params).await,
         "session.deregister" => handlers::handle_session_deregister(state, params).await,
         "session.heartbeat" => handlers::handle_session_heartbeat(state, params).await,
+        "session.list" => handlers::handle_session_list(state, params).await,
+        "session.get" => handlers::handle_session_get(state, params).await,
+        "reservation.claim" => handlers::handle_reservation_claim(state, params).await,
+        "reservation.release" => handlers::handle_reservation_release(state, params).await,
+        "reservation.list" => handlers::handle_reservation_list(state, params).await,
+        "inbox.post" => handlers::handle_inbox_post(state, params).await,
+        "inbox.list" => handlers::handle_inbox_list(state, params).await,
+        "inbox.read" => handlers::handle_inbox_read(state, params).await,
+        "state.set" => handlers::handle_state_set(state, params).await,
+        "state.get" => handlers::handle_state_get(state, params).await,
+        "discover.agents" => handlers::handle_discover_agents(state, params).await,
         other => Err(TeamcommError::MethodNotFound(other.to_string())),
     }
 }

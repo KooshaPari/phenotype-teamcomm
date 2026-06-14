@@ -18,7 +18,9 @@ async fn check_success(method: &str, params: Value) -> Value {
 #[tokio::test]
 async fn register_session_returns_session_id_and_lease() {
     let resp = check_success("register_session", json!({})).await;
-    let obj = resp.as_object().expect("register_session must return an object");
+    let obj = resp
+        .as_object()
+        .expect("register_session must return an object");
     assert!(obj.contains_key("session_id"), "missing session_id");
     assert!(obj.contains_key("lease_ttl_sec"), "missing lease_ttl_sec");
     let session_id = obj["session_id"].as_str().expect("session_id is a string");
@@ -60,17 +62,12 @@ async fn claim_file_returns_reservation_id_expires_at_no_conflicts() {
         reservation_id.starts_with("r_"),
         "reservation_id should start with 'r_', got: {reservation_id}"
     );
-    let expires_at = obj["expires_at"]
-        .as_str()
-        .expect("expires_at is a string");
+    let expires_at = obj["expires_at"].as_str().expect("expires_at is a string");
     assert!(
         chrono::DateTime::parse_from_rfc3339(expires_at).is_ok(),
         "expires_at must be RFC3339, got: {expires_at}"
     );
-    assert!(
-        obj["conflicts"].is_array(),
-        "conflicts must be an array"
-    );
+    assert!(obj["conflicts"].is_array(), "conflicts must be an array");
     assert_eq!(obj["conflicts"].as_array().unwrap().len(), 0);
 }
 
@@ -90,10 +87,10 @@ async fn list_claims_returns_empty_array() {
 #[tokio::test]
 async fn post_message_returns_message_id() {
     let resp = check_success("post_message", json!({})).await;
-    let obj = resp.as_object().expect("post_message must return an object");
-    let message_id = obj["message_id"]
-        .as_str()
-        .expect("message_id is a string");
+    let obj = resp
+        .as_object()
+        .expect("post_message must return an object");
+    let message_id = obj["message_id"].as_str().expect("message_id is a string");
     assert!(
         message_id.starts_with("m_"),
         "message_id should start with 'm_', got: {message_id}"

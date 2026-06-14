@@ -59,6 +59,11 @@ pub fn mint_reservation_id() -> String {
     format!("resv_{}", Uuid::new_v4().simple())
 }
 
+/// Mint a new message id of the form `"msg_<uuid>"`.
+pub fn mint_message_id() -> String {
+    format!("msg_{}", Uuid::new_v4().simple())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -19,10 +19,7 @@ fn manifest_has_required_top_level_fields() {
     let value: serde_json::Value = serde_json::from_str(manifest::MANIFEST).unwrap();
     assert_eq!(value["name"], "teamcomm", "manifest.name");
     assert_eq!(value["transport"], "stdio", "manifest.transport");
-    assert!(
-        value["tools"].is_array(),
-        "manifest.tools must be an array"
-    );
+    assert!(value["tools"].is_array(), "manifest.tools must be an array");
 }
 
 /// Every tool entry must have at minimum a name, description, params schema,
@@ -37,7 +34,10 @@ fn every_tool_has_required_fields() {
             .get("name")
             .and_then(|n| n.as_str())
             .unwrap_or("<unnamed>");
-        assert!(tool.get("name").and_then(|n| n.as_str()).is_some(), "tool missing name");
+        assert!(
+            tool.get("name").and_then(|n| n.as_str()).is_some(),
+            "tool missing name"
+        );
         assert!(
             tool.get("description").and_then(|d| d.as_str()).is_some(),
             "tool {name} missing description"

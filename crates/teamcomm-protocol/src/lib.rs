@@ -20,8 +20,8 @@ pub mod session;
 pub mod state;
 
 pub use error::{error_code, ErrorCode, TeamcommError};
-pub use inbox::InboxMessage;
-pub use reservation::Reservation;
+pub use inbox::{InboxMessage, Priority};
+pub use reservation::{Reservation, ReservationMode};
 pub use rpc::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, RpcId};
 pub use session::{AgentType, Session, SessionRegistration, SessionSummary};
 pub use state::{AgentStatus, LiveState};

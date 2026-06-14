@@ -132,6 +132,9 @@ enum ReservationsSub {
     Claim {
         /// Path to reserve.
         path: PathBuf,
+        /// Session id to claim on behalf of.
+        #[arg(long)]
+        session: String,
         #[arg(long, value_enum, default_value_t = ModeArg::Write)]
         mode: ModeArg,
         #[arg(long, default_value_t = 600)]
@@ -160,6 +163,9 @@ struct InboxCmd {
 enum InboxSub {
     /// List inbox messages.
     List {
+        /// Session id to list inbox for.
+        #[arg(long)]
+        session: String,
         /// Only show unread messages.
         #[arg(long)]
         unread: bool,
@@ -176,6 +182,8 @@ enum InboxSub {
     },
     /// Post a new inbox message.
     Post {
+        /// Source session id.
+        from_session: String,
         /// Target session id.
         to_session: String,
         #[arg(long)]

@@ -162,10 +162,7 @@ mod tests {
             error_code(&TeamcommError::InvalidRequest("x".into())),
             -32600
         );
-        assert_eq!(
-            error_code(&TeamcommError::Internal("x".into())),
-            -32603
-        );
+        assert_eq!(error_code(&TeamcommError::Internal("x".into())), -32603);
     }
 
     #[test]

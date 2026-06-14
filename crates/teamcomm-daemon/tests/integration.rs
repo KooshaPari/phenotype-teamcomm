@@ -72,8 +72,7 @@ async fn listener_handles_register_deregister_and_shutdown() -> Result<()> {
     let state = teamcomm_daemon::new_state();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    let listener_task =
-        tokio::spawn(listener::run(config.clone(), state.clone(), shutdown_rx));
+    let listener_task = tokio::spawn(listener::run(config.clone(), state.clone(), shutdown_rx));
 
     // 1. Connect to the listener.
     let stream = wait_for_socket(&socket_path)
@@ -112,7 +111,10 @@ async fn listener_handles_register_deregister_and_shutdown() -> Result<()> {
             "params": { "session_id": session_id }
         }))
         .await?;
-    assert!(resp.get("error").is_none(), "deregister must succeed: {resp}");
+    assert!(
+        resp.get("error").is_none(),
+        "deregister must succeed: {resp}"
+    );
     let result = resp.get("result").expect("result present");
     assert_eq!(result.get("ok"), Some(&json!(true)));
 
@@ -172,8 +174,7 @@ async fn listener_serves_independent_pids() -> Result<()> {
     let state = teamcomm_daemon::new_state();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    let listener_task =
-        tokio::spawn(listener::run(config.clone(), state.clone(), shutdown_rx));
+    let listener_task = tokio::spawn(listener::run(config.clone(), state.clone(), shutdown_rx));
 
     let stream = wait_for_socket(&socket_path)
         .await

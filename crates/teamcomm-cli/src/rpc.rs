@@ -63,11 +63,7 @@ pub type RpcResult = Result<Value, RpcCallError>;
 /// `call_into` variant returns the structured `RpcResult` so callers can
 /// branch on `MethodNotFound` to emit the M0 placeholder message.
 #[allow(dead_code)]
-pub async fn call(
-    socket: &Option<PathBuf>,
-    method: &str,
-    params: Value,
-) -> anyhow::Result<Value> {
+pub async fn call(socket: &Option<PathBuf>, method: &str, params: Value) -> anyhow::Result<Value> {
     let result = call_into(socket, method, params).await?;
     result.map_err(anyhow::Error::from)
 }
@@ -85,19 +81,14 @@ pub async fn call_into(
     Ok(call_on_stream(stream, method, params).await)
 }
 
-async fn call_on_stream(
-    stream: UnixStream,
-    method: &str,
-    params: Value,
-) -> RpcResult {
+async fn call_on_stream(stream: UnixStream, method: &str, params: Value) -> RpcResult {
     let request = Request {
         jsonrpc: "2.0",
         id: 1,
         method,
         params: &params,
     };
-    let mut payload = serde_json::to_string(&request)
-        .expect("request is always serializable");
+    let mut payload = serde_json::to_string(&request).expect("request is always serializable");
     payload.push('\n');
 
     let (read_half, mut write_half) = stream.into_split();

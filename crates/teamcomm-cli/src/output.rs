@@ -47,7 +47,14 @@ pub fn print_session_list(value: &Value) {
                 ]);
             }
             print_table(
-                vec!["SESSION_ID", "AGENT", "PID", "STATUS", "FOCUS_FILE", "LAST_HEARTBEAT"],
+                vec![
+                    "SESSION_ID",
+                    "AGENT",
+                    "PID",
+                    "STATUS",
+                    "FOCUS_FILE",
+                    "LAST_HEARTBEAT",
+                ],
                 rows,
             );
         }

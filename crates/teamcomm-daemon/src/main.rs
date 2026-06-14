@@ -75,11 +75,19 @@ async fn main() -> Result<()> {
     init_tracing();
 
     match cli.cmd {
-        Cmd::Start { foreground, socket_path, pid_file } => {
-            cmd_start(foreground, socket_path, pid_file).await
-        }
-        Cmd::Stop { socket_path, pid_file } => cmd_stop(socket_path, pid_file).await,
-        Cmd::Status { socket_path, pid_file } => cmd_status(socket_path, pid_file).await,
+        Cmd::Start {
+            foreground,
+            socket_path,
+            pid_file,
+        } => cmd_start(foreground, socket_path, pid_file).await,
+        Cmd::Stop {
+            socket_path,
+            pid_file,
+        } => cmd_stop(socket_path, pid_file).await,
+        Cmd::Status {
+            socket_path,
+            pid_file,
+        } => cmd_status(socket_path, pid_file).await,
     }
 }
 
@@ -134,9 +142,7 @@ fn start_detached(socket_path: Option<PathBuf>, pid_file: Option<PathBuf>) -> Re
     // Make sure we are not already running before forking.
     if let Some(existing) = teamcomm_daemon::pid::read_pid_file(&pid)? {
         if teamcomm_daemon::pid::is_pid_running(existing) {
-            bail!(
-                "daemon already running (pid {existing}); refusing to start a second instance"
-            );
+            bail!("daemon already running (pid {existing}); refusing to start a second instance");
         }
     }
 
@@ -154,7 +160,10 @@ fn start_detached(socket_path: Option<PathBuf>, pid_file: Option<PathBuf>) -> Re
         .with_context(|| format!("failed to spawn daemon child from {}", exe.display()))?;
 
     let child_pid = child.id();
-    println!("daemon started, pid {child_pid}, socket {}", socket.display());
+    println!(
+        "daemon started, pid {child_pid}, socket {}",
+        socket.display()
+    );
     // Parent exits immediately; the child continues running the
     // listener loop.
     Ok(())
@@ -201,7 +210,10 @@ async fn cmd_stop(socket_path: Option<PathBuf>, pid_file: Option<PathBuf>) -> Re
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    warn!(pid, "daemon did not exit within 3s; removing pid file anyway");
+    warn!(
+        pid,
+        "daemon did not exit within 3s; removing pid file anyway"
+    );
     teamcomm_daemon::pid::remove_pid_file(&pid_file)?;
     Ok(())
 }

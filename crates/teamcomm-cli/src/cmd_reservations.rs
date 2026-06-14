@@ -5,7 +5,7 @@
 //! return `-32601 Method not found` (or the daemon isn't running at all),
 //! the CLI prints a friendly placeholder line and exits 0.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
@@ -21,10 +21,11 @@ pub async fn run(cmd: ReservationsCmd) -> anyhow::Result<()> {
         ReservationsSub::Ls { path, socket } => ls(path, socket).await,
         ReservationsSub::Claim {
             path,
+            session,
             mode,
             ttl_sec,
             socket,
-        } => claim(path, mode, ttl_sec, socket).await,
+        } => claim(path, session, mode, ttl_sec, socket).await,
         ReservationsSub::Release {
             reservation_id,
             socket,
@@ -43,6 +44,7 @@ async fn ls(path: Option<PathBuf>, socket: Option<PathBuf>) -> anyhow::Result<()
 
 async fn claim(
     path: PathBuf,
+    session: String,
     mode: ModeArg,
     ttl_sec: u64,
     socket: Option<PathBuf>,
@@ -54,6 +56,7 @@ async fn claim(
         ModeArg::Exclusive => "exclusive",
     };
     let params = json!({
+        "session": session,
         "path": path,
         "mode": mode_str,
         "ttl_sec": ttl_sec,
@@ -79,11 +82,11 @@ async fn release(reservation_id: String, socket: Option<PathBuf>) -> anyhow::Res
 /// groups (inbox, state, discover) via `pub(super)` visibility.
 pub(super) async fn placeholder_or(
     method: &str,
-    socket: &PathBuf,
+    socket: &Path,
     params: serde_json::Value,
     on_success: impl FnOnce(&serde_json::Value),
 ) -> anyhow::Result<()> {
-    match rpc::call_into(&Some(socket.clone()), method, params).await {
+    match rpc::call_into(&Some(socket.to_path_buf()), method, params).await {
         Ok(Ok(value)) => {
             on_success(&value);
             Ok(())
@@ -94,10 +97,11 @@ pub(super) async fn placeholder_or(
             Ok(())
         }
         Ok(Err(rpc::RpcCallError::Transport(reason))) => {
-            println!(
-                "{}", output::m0_placeholder(method)
+            println!("{}", output::m0_placeholder(method));
+            eprintln!(
+                "hint: daemon is not reachable at {} ({reason})",
+                socket.display()
             );
-            eprintln!("hint: daemon is not reachable at {} ({reason})", socket.display());
             Ok(())
         }
         Ok(Err(e)) => {

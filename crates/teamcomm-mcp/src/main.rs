@@ -14,7 +14,7 @@
 use std::process::ExitCode;
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout};
+use tokio::io::{stdin, stdout, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing_subscriber::{fmt, EnvFilter};
 
 use teamcomm_mcp::dispatch;
@@ -113,7 +113,11 @@ async fn handle_request_line(line: &str) -> Value {
     // still process it (the dispatcher is cheap and the M0 mock handlers
     // have no observable side effects) but we don't emit a response. This
     // keeps us compatible with `initialize`-style handshakes and pings.
-    if !request.as_object().map(|o| o.contains_key("id")).unwrap_or(false) {
+    if !request
+        .as_object()
+        .map(|o| o.contains_key("id"))
+        .unwrap_or(false)
+    {
         let _ = dispatch::dispatch(&method, params).await;
         return Value::Null;
     }
@@ -180,10 +184,8 @@ mod tests {
 
     #[tokio::test]
     async fn handles_unknown_method_with_method_not_found() {
-        let resp = handle_request_line(
-            r#"{"jsonrpc":"2.0","id":7,"method":"nope","params":{}}"#,
-        )
-        .await;
+        let resp =
+            handle_request_line(r#"{"jsonrpc":"2.0","id":7,"method":"nope","params":{}}"#).await;
         assert_eq!(resp["id"], 7);
         let err = resp.get("error").expect("error present");
         assert_eq!(err["code"], -32601);
@@ -208,16 +210,16 @@ mod tests {
     #[tokio::test]
     async fn handles_notification_without_id() {
         // Notification: no `id` member. We process but emit no response.
-        let resp = handle_request_line(
-            r#"{"jsonrpc":"2.0","method":"deregister_session","params":{}}"#,
-        )
-        .await;
+        let resp =
+            handle_request_line(r#"{"jsonrpc":"2.0","method":"deregister_session","params":{}}"#)
+                .await;
         assert_eq!(resp, Value::Null);
     }
 
     #[tokio::test]
     async fn defaults_missing_params_to_empty_object() {
-        let resp = handle_request_line(r#"{"jsonrpc":"2.0","id":3,"method":"list_sessions"}"#).await;
+        let resp =
+            handle_request_line(r#"{"jsonrpc":"2.0","id":3,"method":"list_sessions"}"#).await;
         assert_eq!(resp["id"], json!(3));
         assert_eq!(resp["result"], json!([]));
     }

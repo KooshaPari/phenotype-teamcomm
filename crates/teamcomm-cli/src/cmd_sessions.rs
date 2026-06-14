@@ -4,7 +4,7 @@
 //! re-polls every second.
 //! `sessions show <id>` → `session.get` RPC for a single record.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::json;
@@ -48,8 +48,8 @@ async fn show(session_id: String, socket: Option<PathBuf>) -> anyhow::Result<()>
 /// it via `Err(...)` — sessions are not M0 placeholders, so the user
 /// should see the actual failure (e.g. "daemon not running" or a
 /// structured daemon error).
-async fn dispatch(method: &str, socket: &PathBuf, params: serde_json::Value) -> anyhow::Result<()> {
-    match rpc::call_into(&Some(socket.clone()), method, params).await {
+async fn dispatch(method: &str, socket: &Path, params: serde_json::Value) -> anyhow::Result<()> {
+    match rpc::call_into(&Some(socket.to_path_buf()), method, params).await {
         Ok(Ok(value)) => {
             if method == "session.list" {
                 output::print_session_list(&value);

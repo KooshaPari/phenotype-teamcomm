@@ -16,27 +16,32 @@ use super::{InboxCmd, InboxSub, PriorityArg};
 pub async fn run(cmd: InboxCmd) -> anyhow::Result<()> {
     match cmd.sub {
         InboxSub::List {
+            session,
             unread,
             limit,
             socket,
-        } => list(unread, limit, socket).await,
-        InboxSub::Read {
-            message_id,
-            socket,
-        } => read(message_id, socket).await,
+        } => list(session, unread, limit, socket).await,
+        InboxSub::Read { message_id, socket } => read(message_id, socket).await,
         InboxSub::Post {
+            from_session,
             to_session,
             subject,
             body,
             priority,
             socket,
-        } => post(to_session, subject, body, priority, socket).await,
+        } => post(from_session, to_session, subject, body, priority, socket).await,
     }
 }
 
-async fn list(unread: bool, limit: u32, socket: Option<PathBuf>) -> anyhow::Result<()> {
+async fn list(
+    session: String,
+    unread: bool,
+    limit: u32,
+    socket: Option<PathBuf>,
+) -> anyhow::Result<()> {
     let socket = socket.unwrap_or_else(connect::default_socket_path);
     let params = json!({
+        "session": session,
         "unread_only": unread,
         "limit": limit,
     });
@@ -56,6 +61,7 @@ async fn read(message_id: String, socket: Option<PathBuf>) -> anyhow::Result<()>
 }
 
 async fn post(
+    from_session: String,
     to_session: String,
     subject: String,
     body: String,
@@ -69,6 +75,7 @@ async fn post(
         PriorityArg::High => "high",
     };
     let params = json!({
+        "from_session": from_session,
         "to_session": to_session,
         "subject": subject,
         "body": body,

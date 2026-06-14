@@ -40,7 +40,10 @@ async fn start(
     if let Some(pf) = &pid_file {
         println!("  pid file: {}", pf.display());
     }
-    println!("  mode:    {}", if foreground { "foreground" } else { "detached" });
+    println!(
+        "  mode:    {}",
+        if foreground { "foreground" } else { "detached" }
+    );
 
     if foreground {
         // Run the daemon in-process via execvp-style behavior. We use
@@ -48,7 +51,11 @@ async fn start(
         let status = Command::new(&daemon_bin)
             .arg("--socket")
             .arg(&socket)
-            .args(pid_file.iter().flat_map(|p| [String::from("--pid-file"), p.display().to_string()]))
+            .args(
+                pid_file
+                    .iter()
+                    .flat_map(|p| [String::from("--pid-file"), p.display().to_string()]),
+            )
             .status()?;
         if !status.success() {
             anyhow::bail!("daemon exited with non-zero status: {status}");
@@ -59,7 +66,11 @@ async fn start(
         let child = Command::new(&daemon_bin)
             .arg("--socket")
             .arg(&socket)
-            .args(pid_file.iter().flat_map(|p| [String::from("--pid-file"), p.display().to_string()]))
+            .args(
+                pid_file
+                    .iter()
+                    .flat_map(|p| [String::from("--pid-file"), p.display().to_string()]),
+            )
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -73,7 +84,13 @@ async fn stop(socket: Option<PathBuf>) -> anyhow::Result<()> {
     let socket = socket.unwrap_or_else(connect::default_socket_path);
     println!("requesting shutdown via {}", socket.display());
 
-    match rpc::call_into(&Some(socket.clone()), "daemon.shutdown", serde_json::json!({})).await {
+    match rpc::call_into(
+        &Some(socket.clone()),
+        "daemon.shutdown",
+        serde_json::json!({}),
+    )
+    .await
+    {
         Ok(Ok(_value)) => {
             println!("daemon acknowledged shutdown");
             Ok(())
@@ -126,7 +143,9 @@ fn current_exe_or(default: &str) -> anyhow::Result<PathBuf> {
     }
     // Fallback: the current executable's directory + name.
     let cur = std::env::current_exe()?;
-    let dir = cur.parent().ok_or_else(|| anyhow::anyhow!("no parent dir for current_exe"))?;
+    let dir = cur
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("no parent dir for current_exe"))?;
     Ok(dir.join(default))
 }
 

@@ -34,8 +34,9 @@ pub fn write_pid_file(path: &Path, pid: u32) -> Result<()> {
 
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create pid file parent {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create pid file parent {}", parent.display())
+            })?;
         }
     }
     fs::write(path, pid.to_string())
