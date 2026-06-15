@@ -18,20 +18,15 @@ use serde::{Deserialize, Serialize};
 /// explicitly archived. Archived threads are still readable (`get_details`
 /// and the underlying message list remain accessible) but are filtered
 /// out of the default `thread.list` result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadStatus {
     /// Open thread, appears in default `thread.list` results.
+    #[default]
     Active,
     /// Archived thread, does not appear in default `thread.list`
     /// results unless explicitly requested.
     Archived,
-}
-
-impl Default for ThreadStatus {
-    fn default() -> Self {
-        ThreadStatus::Active
-    }
 }
 
 impl ThreadStatus {
@@ -165,7 +160,10 @@ mod tests {
     #[test]
     fn thread_status_parse_is_case_insensitive() {
         assert_eq!(ThreadStatus::parse("ACTIVE"), Some(ThreadStatus::Active));
-        assert_eq!(ThreadStatus::parse("Archived"), Some(ThreadStatus::Archived));
+        assert_eq!(
+            ThreadStatus::parse("Archived"),
+            Some(ThreadStatus::Archived)
+        );
         assert_eq!(ThreadStatus::parse("nope"), None);
     }
 

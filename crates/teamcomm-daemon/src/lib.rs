@@ -1,28 +1,37 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! `teamcomm-daemon` — long-running multi-agent coordinator.
 //!
-//! M0 scope:
-//! - Unix-socket listener with newline-delimited JSON-RPC 2.0 framing.
-//! - In-memory state: sessions, reservations stub, live state, inbox.
-//! - Handlers: `session.register`, `session.deregister`, `session.heartbeat`.
-//! - `clap` CLI: `start [--foreground]`, `stop`, `status`.
-//! - PID-file management with "refuse if a daemon is already running"
-//!   semantics and stale-pid recovery.
-//!
-//! M1 will replace [`state::AppStateInner`] with a SQLite-backed store
-//! and add the rest of the method catalogue (reservations, inbox,
-//! discovery, hook events).
+//! Milestone scope:
+//! - M0 — Unix-socket listener with newline-delimited JSON-RPC 2.0
+//!   framing, in-memory state for sessions, reservations stub, live
+//!   state, inbox. Handlers: `session.register`, `session.deregister`,
+//!   `session.heartbeat`. `clap` CLI: `start [--foreground]`, `stop`,
+//!   `status`. PID-file management with "refuse if a daemon is
+//!   already running" semantics and stale-pid recovery.
+//! - M1 — SQLite-backed [`db::Store`] mirror; durable reservations,
+//!   live state, inbox, threads. Conflict reporting is computed in
+//!   pure logic over the in-memory state and the durable store.
+//! - M2 — file / path reservations with glob-pattern conflict
+//!   detection (`conflict` module, see [`conflict::detect_conflicts`])
+//!   and the JSON-RPC `claim_many` / `conflicts_for_path` /
+//!   `pattern_claim` methods. Clients can lock a single literal path,
+//!   a directory, or a glob pattern, and the daemon rejects claims
+//!   that would overlap with mode-equal or stronger existing locks.
 //!
 //! ## Module map
 //!
 //! - [`config`]   — paths, timeouts, log level.
 //! - [`error`]    — daemon error type and JSON-RPC code mapping.
 //! - [`state`]    — in-memory shared state and id minters.
+//! - [`db`]       — SQLite-backed durable store.
+//! - [`conflict`] — pure-logic conflict detection (M2).
 //! - [`pid`]      — PID file read/write/remove and "is it running" probe.
 //! - [`handlers`] — JSON-RPC method bodies.
 //! - [`listener`] — UnixListener accept loop, signal handling, dispatch.
 
 pub mod config;
+pub mod conflict;
+pub mod db;
 pub mod error;
 pub mod handlers;
 pub mod listener;

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! SQLite-backed persistence layer (M1).
+//! SQLite-backed persistence layer.
 //!
 //! The daemon's in-memory `AppStateInner` is the hot path for reads and
 //! writes; this module is the durable mirror that survives restarts.
-//! `Store` is an `Arc<Mutex<Connection>>` that the daemon's state
+//! [`Store`] is an `Arc<Mutex<Connection>>` that the daemon's state
 //! layer takes a clone of and uses for write-through persistence
 //! alongside the in-memory HashMaps.
 //!
@@ -22,25 +22,35 @@
 //! - **WAL journal mode.** Enables concurrent readers (the daemon
 //!   itself, plus external tools like `sqlite3` for debugging) without
 //!   blocking writers.
+//!
+//! M2 scope: the durable store covers **reservations**. Sessions,
+//! inbox, threads, and live-state are tracked in memory only at the
+//! M2 milestone and will be wired into the store in the next milestone.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use anyhow::{anyhow, Context, Result};
-use chrono::{DateTime, TimeZone, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection};
 use tracing::{debug, info};
 
-use teamcomm_protocol::{
-    InboxMessage, LiveState, MessageType, Priority, Reservation, ReservationMode, Session, Thread,
-    ThreadStatus,
-};
+use teamcomm_protocol::{Reservation, ReservationMode};
 
 use crate::error::TeamcommError;
 
+/// Process-global default [`Store`].
+///
+/// The daemon's `main` installs a file-backed store at startup; handlers
+/// call [`Store::persist_reservation`] which delegates to this global.
+/// When the global is unset (e.g. in unit tests that never install
+/// one), the helper falls back to an in-memory store so that calls
+/// never panic — the persistence is best-effort.
+static GLOBAL_STORE: OnceLock<Store> = OnceLock::new();
+
 /// Current schema version. Bump whenever [`apply_migrations`] adds or
 /// changes a migration step.
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// Shared, cheaply-clonable handle to the SQLite store.
 #[derive(Clone)]
@@ -117,132 +127,72 @@ impl Store {
     /// poisoned — this should never happen in practice because the
     /// only operations we perform are small, transactional SQL.
     pub(crate) fn lock(&self) -> MutexGuard<'_, Connection> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-    }
-
-    // ===== Sessions =====
-
-    pub(crate) fn upsert_session(&self, session: &Session) -> Result<()> {
-        let capabilities_json = serde_json::to_string(&session.capabilities)?;
-        let started_at = session.started_at.to_rfc3339();
-        let last_heartbeat = session.last_heartbeat.to_rfc3339();
-        let working_dir = session.working_dir.to_string_lossy().to_string();
-        let agent_type_str = agent_type_to_string(&session.agent_type);
-
-        let mut guard = self.lock();
-        let tx = guard.transaction()?;
-        tx.execute(
-            "INSERT INTO sessions (session_id, agent_type, pid, started_at, working_dir, capabilities, last_heartbeat)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(session_id) DO UPDATE SET
-                 agent_type = excluded.agent_type,
-                 pid = excluded.pid,
-                 started_at = excluded.started_at,
-                 working_dir = excluded.working_dir,
-                 capabilities = excluded.capabilities,
-                 last_heartbeat = excluded.last_heartbeat",
-            params![
-                session.session_id,
-                agent_type_str,
-                session.pid,
-                started_at,
-                working_dir,
-                capabilities_json,
-                last_heartbeat,
-            ],
-        )?;
-        tx.execute(
-            "INSERT INTO sessions_by_pid (pid, session_id) VALUES (?1, ?2)
-             ON CONFLICT(pid) DO UPDATE SET session_id = excluded.session_id",
-            params![session.pid, session.session_id],
-        )?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    pub(crate) fn delete_session(&self, session_id: &str) -> Result<()> {
-        let mut guard = self.lock();
-        let tx = guard.transaction()?;
-        // Look up the pid so we can keep `sessions_by_pid` consistent.
-        let pid: Option<i64> = tx
-            .query_row(
-                "SELECT pid FROM sessions WHERE session_id = ?1",
-                params![session_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        tx.execute(
-            "DELETE FROM sessions WHERE session_id = ?1",
-            params![session_id],
-        )?;
-        if let Some(pid) = pid {
-            tx.execute(
-                "DELETE FROM sessions_by_pid WHERE pid = ?1",
-                params![pid],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
-    pub(crate) fn get_session(&self, session_id: &str) -> Result<Option<Session>> {
-        let guard = self.lock();
-        let mut stmt = guard.prepare(
-            "SELECT session_id, agent_type, pid, started_at, working_dir, capabilities, last_heartbeat
-             FROM sessions WHERE session_id = ?1",
-        )?;
-        let row = stmt
-            .query_row(params![session_id], row_to_session)
-            .optional()?;
-        Ok(row)
-    }
-
-    pub(crate) fn get_session_by_pid(&self, pid: u32) -> Result<Option<Session>> {
-        let guard = self.lock();
-        let mut stmt = guard.prepare(
-            "SELECT s.session_id, s.agent_type, s.pid, s.started_at, s.working_dir, s.capabilities, s.last_heartbeat
-             FROM sessions s
-             JOIN sessions_by_pid sp ON sp.session_id = s.session_id
-             WHERE sp.pid = ?1",
-        )?;
-        let row = stmt
-            .query_row(params![pid], row_to_session)
-            .optional()?;
-        Ok(row)
-    }
-
-    pub(crate) fn list_sessions(&self) -> Result<Vec<Session>> {
-        let guard = self.lock();
-        let mut stmt = guard.prepare(
-            "SELECT session_id, agent_type, pid, started_at, working_dir, capabilities, last_heartbeat
-             FROM sessions",
-        )?;
-        let rows = stmt
-            .query_map([], row_to_session)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     // ===== Reservations =====
 
+    /// Persist a reservation via the process-global [`Store`].
+    ///
+    /// Handlers call this after a successful in-memory `claim`. If the
+    /// daemon's `main` has not installed a global store (e.g. inside a
+    /// unit test), this falls back to an in-memory store so the call
+    /// is infallible in practice — the worst case is a silent
+    /// no-persist (the in-memory store is dropped at process exit).
+    /// Errors are returned as `anyhow::Error` for the caller to log.
+    pub fn persist_reservation(r: &Reservation) -> Result<()> {
+        let store = Self::global();
+        store.upsert_reservation(r)
+    }
+
+    /// Install `store` as the process-global default. Idempotent: a
+    /// second call with the same store is a no-op; a different store
+    /// after one is installed is logged and ignored.
+    pub fn install_global(store: Store) {
+        // First install wins. If a test or main tries to overwrite, we
+        // keep the first — the daemon must own its persistence target.
+        if GLOBAL_STORE.set(store.clone()).is_err() {
+            debug!("process-global Store already installed; ignoring second install");
+        }
+    }
+
+    /// Borrow the process-global store. Initialises an in-memory one
+    /// on first call so handlers never panic. The fallback store lives
+    /// for the rest of the process (intentional: it is a `&'static`),
+    /// which is fine for both unit tests and any code path that calls
+    /// `persist_reservation` before `main` has installed a file-
+    /// backed store.
+    pub fn global() -> &'static Store {
+        GLOBAL_STORE.get_or_init(Self::fallback_in_memory)
+    }
+
+    fn fallback_in_memory() -> Store {
+        let conn = Connection::open_in_memory().expect("in-memory SQLite is always available");
+        Self::from_connection(conn, PathBuf::from(":memory:")).expect("fresh in-memory store OK")
+    }
+
+    /// Persist (or update) a single reservation.
     pub(crate) fn upsert_reservation(&self, r: &Reservation) -> Result<()> {
         let mode_str = reservation_mode_to_string(r.mode);
         let acquired_at = r.acquired_at.to_rfc3339();
         let expires_at = r.expires_at.to_rfc3339();
         let path = r.path.to_string_lossy().to_string();
+        // M2: a `is_pattern` flag lets the conflict detector recognise
+        // glob-shaped reservations without re-parsing the path on
+        // every query.
+        let is_pattern = is_glob_path(r.path.as_path());
 
         let guard = self.lock();
         guard.execute(
-            "INSERT INTO reservations (reservation_id, session_id, path, mode, acquired_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO reservations (reservation_id, session_id, path, mode, acquired_at, expires_at, is_pattern)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(reservation_id) DO UPDATE SET
                  session_id = excluded.session_id,
                  path = excluded.path,
                  mode = excluded.mode,
                  acquired_at = excluded.acquired_at,
-                 expires_at = excluded.expires_at",
+                 expires_at = excluded.expires_at,
+                 is_pattern = excluded.is_pattern",
             params![
                 r.reservation_id,
                 r.session_id,
@@ -250,12 +200,14 @@ impl Store {
                 mode_str,
                 acquired_at,
                 expires_at,
+                is_pattern as i32,
             ],
         )?;
         Ok(())
     }
 
-    pub(crate) fn delete_reservation(&self, id: &str) -> Result<()> {
+    /// Delete a reservation by id. No-op if the id is unknown.
+    pub fn delete_reservation(&self, id: &str) -> Result<()> {
         let guard = self.lock();
         guard.execute(
             "DELETE FROM reservations WHERE reservation_id = ?1",
@@ -264,7 +216,21 @@ impl Store {
         Ok(())
     }
 
-    pub(crate) fn list_reservations(&self) -> Result<Vec<Reservation>> {
+    /// Look up a single reservation by id.
+    pub fn get_reservation(&self, id: &str) -> Result<Option<Reservation>> {
+        let guard = self.lock();
+        let mut stmt = guard.prepare(
+            "SELECT reservation_id, session_id, path, mode, acquired_at, expires_at
+             FROM reservations WHERE reservation_id = ?1",
+        )?;
+        let row = stmt.query_row(params![id], row_to_reservation).ok();
+        Ok(row)
+    }
+
+    /// List every reservation currently in the store. Callers are
+    /// responsible for filtering out expired / released entries if
+    /// needed.
+    pub fn list_reservations(&self) -> Result<Vec<Reservation>> {
         let guard = self.lock();
         let mut stmt = guard.prepare(
             "SELECT reservation_id, session_id, path, mode, acquired_at, expires_at
@@ -276,252 +242,40 @@ impl Store {
         Ok(rows)
     }
 
-    // ===== Live state =====
-
-    pub(crate) fn upsert_live_state(&self, s: &LiveState) -> Result<()> {
-        let focus_file = s.focus_file.as_ref().map(|p| p.to_string_lossy().to_string());
-        let worktree = s.worktree.as_ref().map(|p| p.to_string_lossy().to_string());
-        let last_heartbeat = s.last_heartbeat.to_rfc3339();
-        let status_str = s.status.as_str();
-
-        let guard = self.lock();
-        guard.execute(
-            "INSERT INTO live_state
-                 (session_id, focus_file, focus_branch, worktree, status, last_heartbeat)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(session_id) DO UPDATE SET
-                 focus_file = excluded.focus_file,
-                 focus_branch = excluded.focus_branch,
-                 worktree = excluded.worktree,
-                 status = excluded.status,
-                 last_heartbeat = excluded.last_heartbeat",
-            params![
-                s.session_id,
-                focus_file,
-                s.focus_branch,
-                worktree,
-                status_str,
-                last_heartbeat,
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub(crate) fn get_live_state(&self, session_id: &str) -> Result<Option<LiveState>> {
+    /// List every reservation owned by `session_id`.
+    pub fn list_reservations_for_session(&self, session_id: &str) -> Result<Vec<Reservation>> {
         let guard = self.lock();
         let mut stmt = guard.prepare(
-            "SELECT session_id, focus_file, focus_branch, worktree, status, last_heartbeat
-             FROM live_state WHERE session_id = ?1",
-        )?;
-        let row = stmt
-            .query_row(params![session_id], row_to_live_state)
-            .optional()?;
-        Ok(row)
-    }
-
-    pub(crate) fn list_live_state(&self) -> Result<Vec<LiveState>> {
-        let guard = self.lock();
-        let mut stmt = guard.prepare(
-            "SELECT session_id, focus_file, focus_branch, worktree, status, last_heartbeat
-             FROM live_state",
+            "SELECT reservation_id, session_id, path, mode, acquired_at, expires_at
+             FROM reservations WHERE session_id = ?1",
         )?;
         let rows = stmt
-            .query_map([], row_to_live_state)?
+            .query_map(params![session_id], row_to_reservation)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
-    // ===== Inbox =====
-
-    pub(crate) fn insert_inbox_message(&self, m: &InboxMessage) -> Result<()> {
-        let priority_str = m.priority.as_str();
-        let message_type_str = m.message_type.as_str();
-        let ts = m.ts.to_rfc3339();
-        let references_json = m
-            .references
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()?;
-
+    /// Delete every reservation owned by `session_id`. Returns the
+    /// number of rows removed. Used on session deregister.
+    pub fn delete_reservations_for_session(&self, session_id: &str) -> Result<usize> {
         let guard = self.lock();
-        guard.execute(
-            "INSERT INTO inbox_messages
-                 (message_id, from_session, to_session, subject, body, priority,
-                  message_type, thread_id, references, ts, read)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-             ON CONFLICT(message_id) DO UPDATE SET
-                 read = excluded.read",
-            params![
-                m.message_id,
-                m.from_session,
-                m.to_session,
-                m.subject,
-                m.body,
-                priority_str,
-                message_type_str,
-                m.thread_id,
-                references_json,
-                ts,
-                m.read as i32,
-            ],
+        let n = guard.execute(
+            "DELETE FROM reservations WHERE session_id = ?1",
+            params![session_id],
         )?;
-        Ok(())
+        Ok(n)
     }
 
-    pub(crate) fn list_inbox(&self, session_id: &str) -> Result<Vec<InboxMessage>> {
-        let guard = self.lock();
-        let mut stmt = guard.prepare(
-            "SELECT message_id, from_session, to_session, subject, body, priority,
-                    message_type, thread_id, references, ts, read
-             FROM inbox_messages
-             WHERE to_session = ?1
-             ORDER BY ts ASC",
-        )?;
-        let rows = stmt
-            .query_map(params![session_id], row_to_inbox)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    pub(crate) fn get_inbox_message(&self, id: &str) -> Result<Option<InboxMessage>> {
-        let guard = self.lock();
-        let mut stmt = guard.prepare(
-            "SELECT message_id, from_session, to_session, subject, body, priority,
-                    message_type, thread_id, references, ts, read
-             FROM inbox_messages
-             WHERE message_id = ?1",
-        )?;
-        let row = stmt
-            .query_row(params![id], row_to_inbox)
-            .optional()?;
-        Ok(row)
-    }
-
-    pub(crate) fn mark_inbox_read(&self, ids: &[String]) -> Result<()> {
-        if ids.is_empty() {
-            return Ok(());
-        }
-        let guard = self.lock();
-        let mut stmt = guard
-            .prepare("UPDATE inbox_messages SET read = 1 WHERE message_id = ?1")?;
-        for id in ids {
-            stmt.execute(params![id])?;
-        }
-        Ok(())
-    }
-
-    // ===== Threads =====
-
-    pub(crate) fn upsert_thread(&self, t: &Thread) -> Result<()> {
-        let created_at = t.created_at.to_rfc3339();
-        let status_str = t.status.as_str();
-        let guard = self.lock();
-        guard.execute(
-            "INSERT INTO threads (thread_id, title, topic, created_by, created_at, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(thread_id) DO UPDATE SET
-                 title = excluded.title,
-                 topic = excluded.topic,
-                 status = excluded.status",
-            params![
-                t.thread_id,
-                t.title,
-                t.topic,
-                t.created_by,
-                created_at,
-                status_str,
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub(crate) fn get_thread(&self, id: &str) -> Result<Option<Thread>> {
-        let guard = self.lock();
-        let mut stmt = guard.prepare(
-            "SELECT thread_id, title, topic, created_by, created_at, status
-             FROM threads WHERE thread_id = ?1",
-        )?;
-        let row = stmt
-            .query_row(params![id], row_to_thread)
-            .optional()?;
-        Ok(row)
-    }
-
-    pub(crate) fn list_threads(&self, include_archived: bool) -> Result<Vec<Thread>> {
-        let guard = self.lock();
-        let sql = if include_archived {
-            "SELECT thread_id, title, topic, created_by, created_at, status
-             FROM threads ORDER BY created_at ASC"
-        } else {
-            "SELECT thread_id, title, topic, created_by, created_at, status
-             FROM threads WHERE status = 'active' ORDER BY created_at ASC"
-        };
-        let mut stmt = guard.prepare(sql)?;
-        let rows = stmt
-            .query_map([], row_to_thread)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    pub(crate) fn delete_thread(&self, id: &str) -> Result<()> {
-        let guard = self.lock();
-        let tx = guard.unchecked_transaction()?;
-        tx.execute(
-            "DELETE FROM thread_participants WHERE thread_id = ?1",
-            params![id],
-        )?;
-        tx.execute("DELETE FROM threads WHERE thread_id = ?1", params![id])?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    pub(crate) fn add_thread_participant(
-        &self,
-        thread_id: &str,
-        session_id: &str,
-    ) -> Result<()> {
-        let guard = self.lock();
-        guard.execute(
-            "INSERT OR IGNORE INTO thread_participants (thread_id, session_id, joined_at)
-             VALUES (?1, ?2, ?3)",
-            params![thread_id, session_id, Utc::now().to_rfc3339()],
-        )?;
-        Ok(())
-    }
-
-    pub(crate) fn remove_thread_participant(
-        &self,
-        thread_id: &str,
-        session_id: &str,
-    ) -> Result<()> {
-        let guard = self.lock();
-        guard.execute(
-            "DELETE FROM thread_participants WHERE thread_id = ?1 AND session_id = ?2",
-            params![thread_id, session_id],
-        )?;
-        Ok(())
-    }
-
-    pub(crate) fn list_thread_participants(&self, thread_id: &str) -> Result<Vec<String>> {
-        let guard = self.lock();
-        let mut stmt = guard.prepare(
-            "SELECT session_id FROM thread_participants
-             WHERE thread_id = ?1
-             ORDER BY joined_at ASC",
-        )?;
-        let rows = stmt
-            .query_map(params![thread_id], |row| row.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    /// Count inbox messages tagged with `thread_id`. Used to populate
-    /// [`crate::state::ThreadDetails::message_count`].
-    pub(crate) fn count_inbox_for_thread(&self, thread_id: &str) -> Result<u32> {
+    /// Count reservations that have the given exact path string. The
+    /// check is naive (path-equality only) and is intended for
+    /// debugging and quick probes, not the authoritative conflict
+    /// check. The authoritative check is in
+    /// [`crate::conflict::detect_conflicts`].
+    pub fn count_reservations_for_path(&self, path: &str) -> Result<u32> {
         let guard = self.lock();
         let n: i64 = guard.query_row(
-            "SELECT COUNT(*) FROM inbox_messages WHERE thread_id = ?1",
-            params![thread_id],
+            "SELECT COUNT(*) FROM reservations WHERE path = ?1",
+            params![path],
             |row| row.get(0),
         )?;
         Ok(n as u32)
@@ -540,6 +294,9 @@ fn apply_migrations(conn: &mut Connection) -> Result<()> {
     if current < 1 {
         tx.execute_batch(SCHEMA_V1)?;
     }
+    if current < 2 {
+        tx.execute_batch(SCHEMA_V2_ADD_PATTERN_FLAG)?;
+    }
 
     // Bump user_version to the current target. `user_version` is a
     // single integer PRAGMA that we treat as the schema version.
@@ -550,24 +307,9 @@ fn apply_migrations(conn: &mut Connection) -> Result<()> {
 }
 
 const SCHEMA_V1: &str = r#"
-CREATE TABLE IF NOT EXISTS sessions (
-    session_id     TEXT PRIMARY KEY,
-    agent_type     TEXT NOT NULL,
-    pid            INTEGER NOT NULL,
-    started_at     TEXT NOT NULL,
-    working_dir    TEXT NOT NULL,
-    capabilities   TEXT NOT NULL,
-    last_heartbeat TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS sessions_by_pid (
-    pid        INTEGER PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS reservations (
     reservation_id TEXT PRIMARY KEY,
-    session_id     TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    session_id     TEXT NOT NULL,
     path           TEXT NOT NULL,
     mode           TEXT NOT NULL,
     acquired_at    TEXT NOT NULL,
@@ -575,80 +317,14 @@ CREATE TABLE IF NOT EXISTS reservations (
 );
 CREATE INDEX IF NOT EXISTS idx_reservations_path ON reservations(path);
 CREATE INDEX IF NOT EXISTS idx_reservations_session ON reservations(session_id);
+"#;
 
-CREATE TABLE IF NOT EXISTS live_state (
-    session_id     TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
-    focus_file     TEXT,
-    focus_branch   TEXT,
-    worktree       TEXT,
-    status         TEXT NOT NULL,
-    last_heartbeat TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS inbox_messages (
-    message_id   TEXT PRIMARY KEY,
-    from_session TEXT NOT NULL,
-    to_session   TEXT NOT NULL,
-    subject      TEXT NOT NULL,
-    body         TEXT NOT NULL,
-    priority     TEXT NOT NULL,
-    message_type TEXT NOT NULL,
-    thread_id    TEXT,
-    references   TEXT,
-    ts           TEXT NOT NULL,
-    read         INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_inbox_to_session ON inbox_messages(to_session);
-CREATE INDEX IF NOT EXISTS idx_inbox_thread_id ON inbox_messages(thread_id);
-CREATE INDEX IF NOT EXISTS idx_inbox_from_session ON inbox_messages(from_session);
-
-CREATE TABLE IF NOT EXISTS threads (
-    thread_id  TEXT PRIMARY KEY,
-    title      TEXT NOT NULL,
-    topic      TEXT,
-    created_by TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
-    created_at TEXT NOT NULL,
-    status     TEXT NOT NULL DEFAULT 'active'
-);
-CREATE INDEX IF NOT EXISTS idx_threads_status ON threads(status);
-CREATE INDEX IF NOT EXISTS idx_threads_created_by ON threads(created_by);
-
-CREATE TABLE IF NOT EXISTS thread_participants (
-    thread_id  TEXT NOT NULL REFERENCES threads(thread_id) ON DELETE CASCADE,
-    session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
-    joined_at  TEXT NOT NULL,
-    PRIMARY KEY (thread_id, session_id)
-);
-CREATE INDEX IF NOT EXISTS idx_participants_session ON thread_participants(session_id);
+const SCHEMA_V2_ADD_PATTERN_FLAG: &str = r#"
+ALTER TABLE reservations ADD COLUMN is_pattern INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_reservations_is_pattern ON reservations(is_pattern);
 "#;
 
 // ===== Row decoders =====
-
-fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
-    let session_id: String = row.get(0)?;
-    let agent_type_str: String = row.get(1)?;
-    let pid: i64 = row.get(2)?;
-    let started_at: String = row.get(3)?;
-    let working_dir: String = row.get(4)?;
-    let capabilities_json: String = row.get(5)?;
-    let last_heartbeat: String = row.get(6)?;
-
-    Ok(Session {
-        session_id,
-        agent_type: agent_type_from_string(&agent_type_str),
-        pid: pid as u32,
-        started_at: parse_rfc3339(&started_at, "sessions.started_at")?,
-        working_dir: PathBuf::from(working_dir),
-        capabilities: serde_json::from_str(&capabilities_json).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(
-                5,
-                rusqlite::types::Type::Text,
-                Box::new(e),
-            )
-        })?,
-        last_heartbeat: parse_rfc3339(&last_heartbeat, "sessions.last_heartbeat")?,
-    })
-}
 
 fn row_to_reservation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reservation> {
     let reservation_id: String = row.get(0)?;
@@ -662,93 +338,18 @@ fn row_to_reservation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reservation> 
         reservation_id,
         session_id,
         path: PathBuf::from(path),
-        mode: reservation_mode_from_string(&mode_str)
-            .ok_or_else(|| rusqlite_to_sql_decode_error("reservation.mode", mode_str))?,
+        mode: reservation_mode_from_string(&mode_str).ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                3,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("unknown reservation.mode: {mode_str}"),
+                )),
+            )
+        })?,
         acquired_at: parse_rfc3339(&acquired_at, "reservations.acquired_at")?,
         expires_at: parse_rfc3339(&expires_at, "reservations.expires_at")?,
-    })
-}
-
-fn row_to_live_state(row: &rusqlite::Row<'_>) -> rusqlite::Result<LiveState> {
-    let session_id: String = row.get(0)?;
-    let focus_file: Option<String> = row.get(1)?;
-    let focus_branch: Option<String> = row.get(2)?;
-    let worktree: Option<String> = row.get(3)?;
-    let status_str: String = row.get(4)?;
-    let last_heartbeat: String = row.get(5)?;
-
-    let status = teamcomm_protocol::AgentStatus::parse(&status_str)
-        .ok_or_else(|| rusqlite_to_sql_decode_error("live_state.status", status_str))?;
-    Ok(LiveState {
-        session_id,
-        focus_file: focus_file.map(PathBuf::from),
-        focus_branch,
-        worktree: worktree.map(PathBuf::from),
-        status,
-        last_heartbeat: parse_rfc3339(&last_heartbeat, "live_state.last_heartbeat")?,
-    })
-}
-
-fn row_to_inbox(row: &rusqlite::Row<'_>) -> rusqlite::Result<InboxMessage> {
-    let message_id: String = row.get(0)?;
-    let from_session: String = row.get(1)?;
-    let to_session: String = row.get(2)?;
-    let subject: String = row.get(3)?;
-    let body: String = row.get(4)?;
-    let priority_str: String = row.get(5)?;
-    let message_type_str: String = row.get(6)?;
-    let thread_id: Option<String> = row.get(7)?;
-    let references_json: Option<String> = row.get(8)?;
-    let ts: String = row.get(9)?;
-    let read_i: i64 = row.get(10)?;
-
-    let priority = Priority::parse(&priority_str)
-        .ok_or_else(|| rusqlite_to_sql_decode_error("inbox.priority", priority_str))?;
-    let message_type = MessageType::parse(&message_type_str)
-        .ok_or_else(|| rusqlite_to_sql_decode_error("inbox.message_type", message_type_str))?;
-    let references: Option<Vec<String>> = references_json
-        .as_deref()
-        .map(serde_json::from_str)
-        .transpose()
-        .map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(
-                8,
-                rusqlite::types::Type::Text,
-                Box::new(e),
-            )
-        })?;
-
-    Ok(InboxMessage {
-        message_id,
-        from_session,
-        to_session,
-        subject,
-        body,
-        priority,
-        message_type,
-        thread_id,
-        references,
-        ts: parse_rfc3339(&ts, "inbox.ts")?,
-        read: read_i != 0,
-    })
-}
-
-fn row_to_thread(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
-    let thread_id: String = row.get(0)?;
-    let title: String = row.get(1)?;
-    let topic: Option<String> = row.get(2)?;
-    let created_by: String = row.get(3)?;
-    let created_at: String = row.get(4)?;
-    let status_str: String = row.get(5)?;
-    let status = ThreadStatus::parse(&status_str)
-        .ok_or_else(|| rusqlite_to_sql_decode_error("threads.status", status_str))?;
-    Ok(Thread {
-        thread_id,
-        title,
-        topic,
-        created_by,
-        created_at: parse_rfc3339(&created_at, "threads.created_at")?,
-        status,
     })
 }
 
@@ -759,61 +360,15 @@ fn parse_rfc3339(s: &str, ctx: &'static str) -> rusqlite::Result<DateTime<Utc>> 
             rusqlite::Error::FromSqlConversionFailure(
                 0,
                 rusqlite::types::Type::Text,
-                Box::new(SqlDecodeError(format!("{ctx}: {e}"))),
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("{ctx}: {e}"),
+                )),
             )
         })
 }
 
-fn rusqlite_to_sql_decode_error(ctx: &str, raw: String) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(
-        0,
-        rusqlite::types::Type::Text,
-        Box::new(SqlDecodeError(format!("{ctx}: unknown variant {raw}"))),
-    )
-}
-
-/// Newtype so we can stuff any string into a `Box<dyn Error>` for
-/// rusqlite's `FromSqlConversionFailure`.
-#[derive(Debug)]
-struct SqlDecodeError(String);
-impl std::fmt::Display for SqlDecodeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-impl std::error::Error for SqlDecodeError {}
-
 // ===== Wire-shape helpers =====
-
-/// `AgentType` -> stable string for the `sessions.agent_type` column.
-pub fn agent_type_to_string(t: &teamcomm_protocol::AgentType) -> String {
-    use teamcomm_protocol::AgentType::*;
-    match t {
-        Forge => "forge".to_string(),
-        Codex => "codex".to_string(),
-        Claude => "claude".to_string(),
-        Copilot => "copilot".to_string(),
-        Custom(s) => format!("custom:{s}"),
-    }
-}
-
-/// Inverse of [`agent_type_to_string`]. Falls back to
-/// `AgentType::Custom(raw)` for any unknown tag.
-pub fn agent_type_from_string(s: &str) -> teamcomm_protocol::AgentType {
-    use teamcomm_protocol::AgentType::*;
-    if let Some(rest) = s.strip_prefix("custom:") {
-        return Custom(rest.to_string());
-    }
-    match s {
-        "forge" => Forge,
-        "codex" => Codex,
-        "claude" => Claude,
-        "copilot" => Copilot,
-        // Backwards-compat: a bare "custom" with no inner string.
-        "custom" => Custom(String::new()),
-        other => Custom(other.to_string()),
-    }
-}
 
 fn reservation_mode_to_string(m: ReservationMode) -> &'static str {
     match m {
@@ -832,6 +387,13 @@ fn reservation_mode_from_string(s: &str) -> Option<ReservationMode> {
     }
 }
 
+/// Cheap glob-detection: `*` / `?` / `[` anywhere in the string. Used
+/// only to populate the `is_pattern` column; the authoritative
+/// pattern detection is `PathPattern::new(...).is_literal()`.
+fn is_glob_path(p: &Path) -> bool {
+    p.to_string_lossy().contains(['*', '?', '['])
+}
+
 // ===== Conversions to/from `TeamcommError` =====
 
 /// Convenience: a DB error that should be reported as a 500-class
@@ -843,6 +405,7 @@ pub fn db_to_teamcomm(e: anyhow::Error) -> TeamcommError {
 /// Convert a rusqlite error (e.g. FK violation) to a sensible
 /// `TeamcommError`. Use when the caller asked for something the store
 /// rejected structurally.
+#[allow(dead_code)]
 pub fn sql_integrity_to_teamcomm(e: rusqlite::Error) -> TeamcommError {
     match e {
         rusqlite::Error::SqliteFailure(err, _)
@@ -854,18 +417,21 @@ pub fn sql_integrity_to_teamcomm(e: rusqlite::Error) -> TeamcommError {
     }
 }
 
-// Ensure unused imports don't sneak in if we add new helpers later.
-#[allow(dead_code)]
-fn _assert_send_sync() {
-    fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<Store>();
-    let _ = Utc.timestamp_opt(0, 0);
-    let _ = anyhow!("unused");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+
+    fn sample_reservation(id: &str, path: &str) -> Reservation {
+        Reservation {
+            reservation_id: id.into(),
+            session_id: "sess-1".into(),
+            path: PathBuf::from(path),
+            mode: ReservationMode::Write,
+            acquired_at: Utc.with_ymd_and_hms(2026, 6, 14, 12, 0, 0).unwrap(),
+            expires_at: Utc.with_ymd_and_hms(2026, 6, 14, 12, 30, 0).unwrap(),
+        }
+    }
 
     #[test]
     fn in_memory_store_opens_and_initializes_schema() {
@@ -873,7 +439,6 @@ mod tests {
         let path = store.path();
         assert_eq!(path, Path::new(":memory:"));
 
-        // user_version must be bumped to SCHEMA_VERSION.
         let guard = store.lock();
         let v: i32 = guard
             .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -882,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn in_memory_store_creates_all_expected_tables() {
+    fn in_memory_store_creates_reservations_table() {
         let store = Store::in_memory().unwrap();
         let guard = store.lock();
         let names: Vec<String> = guard
@@ -892,26 +457,15 @@ mod tests {
             .unwrap()
             .collect::<rusqlite::Result<Vec<_>>>()
             .unwrap();
-        for required in [
-            "sessions",
-            "sessions_by_pid",
-            "reservations",
-            "live_state",
-            "inbox_messages",
-            "threads",
-            "thread_participants",
-        ] {
-            assert!(
-                names.iter().any(|n| n == required),
-                "expected table `{required}`, got: {names:?}"
-            );
-        }
+        assert!(
+            names.iter().any(|n| n == "reservations"),
+            "expected table `reservations`, got: {names:?}"
+        );
     }
 
     #[test]
     fn migrations_are_idempotent() {
         let store = Store::in_memory().unwrap();
-        // Running lock-and-bump a second time must be a no-op.
         {
             let mut guard = store.lock();
             apply_migrations(&mut guard).unwrap();
@@ -932,19 +486,174 @@ mod tests {
     }
 
     #[test]
-    fn agent_type_round_trip_through_string_helpers() {
-        use teamcomm_protocol::AgentType::*;
-        let cases = [
-            Forge,
-            Codex,
-            Claude,
-            Copilot,
-            Custom("aider".to_string()),
-        ];
-        for t in &cases {
-            let s = agent_type_to_string(t);
-            let back = agent_type_from_string(&s);
-            assert_eq!(&back, t, "roundtrip failed for {s}");
+    fn reservation_round_trip_via_store() {
+        let store = Store::in_memory().unwrap();
+        let r = sample_reservation("res-1", "/repo/src/lib.rs");
+        store.upsert_reservation(&r).unwrap();
+        let back = store.get_reservation("res-1").unwrap().unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn reservation_upsert_updates_existing() {
+        let store = Store::in_memory().unwrap();
+        let mut r = sample_reservation("res-1", "/repo/src/lib.rs");
+        store.upsert_reservation(&r).unwrap();
+        r.mode = ReservationMode::Exclusive;
+        store.upsert_reservation(&r).unwrap();
+        let back = store.get_reservation("res-1").unwrap().unwrap();
+        assert_eq!(back.mode, ReservationMode::Exclusive);
+    }
+
+    #[test]
+    fn reservation_delete_removes_row() {
+        let store = Store::in_memory().unwrap();
+        let r = sample_reservation("res-1", "/repo/src/lib.rs");
+        store.upsert_reservation(&r).unwrap();
+        store.delete_reservation("res-1").unwrap();
+        assert!(store.get_reservation("res-1").unwrap().is_none());
+    }
+
+    #[test]
+    fn reservation_list_returns_all_rows() {
+        let store = Store::in_memory().unwrap();
+        store
+            .upsert_reservation(&sample_reservation("res-1", "/a"))
+            .unwrap();
+        store
+            .upsert_reservation(&sample_reservation("res-2", "/b"))
+            .unwrap();
+        store
+            .upsert_reservation(&sample_reservation("res-3", "/c"))
+            .unwrap();
+        let all = store.list_reservations().unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn list_reservations_for_session_filters_correctly() {
+        let store = Store::in_memory().unwrap();
+        store
+            .upsert_reservation(&sample_reservation("res-1", "/a"))
+            .unwrap();
+        let mut r2 = sample_reservation("res-2", "/b");
+        r2.session_id = "sess-2".into();
+        store.upsert_reservation(&r2).unwrap();
+
+        let s1 = store.list_reservations_for_session("sess-1").unwrap();
+        assert_eq!(s1.len(), 1);
+        assert_eq!(s1[0].reservation_id, "res-1");
+
+        let s2 = store.list_reservations_for_session("sess-2").unwrap();
+        assert_eq!(s2.len(), 1);
+        assert_eq!(s2[0].reservation_id, "res-2");
+    }
+
+    #[test]
+    fn delete_reservations_for_session_removes_only_that_session() {
+        let store = Store::in_memory().unwrap();
+        store
+            .upsert_reservation(&sample_reservation("res-1", "/a"))
+            .unwrap();
+        store
+            .upsert_reservation(&sample_reservation("res-2", "/b"))
+            .unwrap();
+        let n = store.delete_reservations_for_session("sess-1").unwrap();
+        assert_eq!(n, 2);
+        let all = store.list_reservations().unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn delete_reservations_for_session_leaves_other_sessions_alone() {
+        let store = Store::in_memory().unwrap();
+        store
+            .upsert_reservation(&sample_reservation("res-1", "/a"))
+            .unwrap();
+        let mut r2 = sample_reservation("res-2", "/b");
+        r2.session_id = "sess-2".into();
+        store.upsert_reservation(&r2).unwrap();
+        let n = store.delete_reservations_for_session("sess-1").unwrap();
+        assert_eq!(n, 1);
+        let all = store.list_reservations().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].session_id, "sess-2");
+    }
+
+    #[test]
+    fn count_reservations_for_path_returns_correct_count() {
+        let store = Store::in_memory().unwrap();
+        store
+            .upsert_reservation(&sample_reservation("res-1", "/a"))
+            .unwrap();
+        store
+            .upsert_reservation(&sample_reservation("res-2", "/a"))
+            .unwrap();
+        let mut r3 = sample_reservation("res-3", "/b");
+        r3.session_id = "sess-2".into();
+        store.upsert_reservation(&r3).unwrap();
+        assert_eq!(store.count_reservations_for_path("/a").unwrap(), 2);
+        assert_eq!(store.count_reservations_for_path("/b").unwrap(), 1);
+        assert_eq!(store.count_reservations_for_path("/c").unwrap(), 0);
+    }
+
+    #[test]
+    fn is_pattern_flag_set_for_glob_paths() {
+        let store = Store::in_memory().unwrap();
+        store
+            .upsert_reservation(&sample_reservation("res-1", "/repo/src/**"))
+            .unwrap();
+        let guard = store.lock();
+        let is_pat: i64 = guard
+            .query_row(
+                "SELECT is_pattern FROM reservations WHERE reservation_id = ?1",
+                params!["res-1"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(is_pat, 1);
+    }
+
+    #[test]
+    fn is_pattern_flag_unset_for_literal_paths() {
+        let store = Store::in_memory().unwrap();
+        store
+            .upsert_reservation(&sample_reservation("res-1", "/repo/src/lib.rs"))
+            .unwrap();
+        let guard = store.lock();
+        let is_pat: i64 = guard
+            .query_row(
+                "SELECT is_pattern FROM reservations WHERE reservation_id = ?1",
+                params!["res-1"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(is_pat, 0);
+    }
+
+    #[test]
+    fn is_glob_path_helper_detects_wildcards() {
+        assert!(is_glob_path(Path::new("/repo/src/*")));
+        assert!(is_glob_path(Path::new("/repo/src/file?.rs")));
+        assert!(is_glob_path(Path::new("/repo/src/[abc].rs")));
+        assert!(!is_glob_path(Path::new("/repo/src/lib.rs")));
+    }
+
+    #[test]
+    fn reservation_mode_round_trip_through_string_helpers() {
+        for m in [
+            ReservationMode::Read,
+            ReservationMode::Write,
+            ReservationMode::Exclusive,
+        ] {
+            let s = reservation_mode_to_string(m);
+            let back = reservation_mode_from_string(s).unwrap();
+            assert_eq!(back, m);
         }
+    }
+
+    #[test]
+    fn unknown_mode_string_returns_none() {
+        assert!(reservation_mode_from_string("nonsense").is_none());
     }
 }

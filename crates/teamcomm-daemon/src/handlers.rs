@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use chrono::Utc;
 use serde_json::{json, Value};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use teamcomm_protocol::rpc::RpcId;
 use teamcomm_protocol::{
@@ -19,6 +19,7 @@ use teamcomm_protocol::{
     Session, SessionSummary,
 };
 
+use crate::conflict::{self, Candidate, ConflictReport};
 use crate::error::TeamcommError;
 use crate::state::{mint_message_id, mint_reservation_id, mint_session_id, AppState};
 
@@ -102,7 +103,8 @@ pub async fn handle_session_register(
 /// `session.deregister` — remove a session by id.
 ///
 /// Missing session is a no-op success: we return `{"ok": true}` so that
-/// at-shutdown cleanup requests are idempotent.
+/// at-shutdown cleanup requests are idempotent. As a side effect all of
+/// the session's reservations are released (in-memory and durable).
 pub async fn handle_session_deregister(
     state: AppState,
     payload: Value,
@@ -118,9 +120,29 @@ pub async fn handle_session_deregister(
     if let Some(sess) = &removed {
         guard.sessions_by_pid.remove(&sess.pid);
     }
+    // Release every reservation this session owned.
+    let released: Vec<String> = guard
+        .reservations
+        .iter()
+        .filter(|(_, r)| r.session_id == session_id)
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in &released {
+        guard.reservations.remove(id);
+    }
     drop(guard);
 
-    info!(session_id = %session_id, removed = removed.is_some(), "session deregistered");
+    // Durable mirror.
+    if let Err(e) = crate::db::Store::global().delete_reservations_for_session(&session_id) {
+        warn!(error = %e, session_id = %session_id, "failed to delete session reservations from store");
+    }
+
+    info!(
+        session_id = %session_id,
+        removed = removed.is_some(),
+        released_reservations = released.len(),
+        "session deregistered"
+    );
 
     Ok(json!({ "ok": true }))
 }
@@ -184,6 +206,19 @@ pub async fn handle_session_get(state: AppState, payload: Value) -> Result<Value
 // ===== Reservation handlers =====
 
 /// `reservation.claim` — claim an advisory lock on a path.
+///
+/// M2: the claim is rejected with a structured [`Conflict`] list when any
+/// existing reservation on a literal-equal, glob-overlapping, or
+/// directory-ancestor path would block the new one. When the claim is
+/// granted, `conflicts` is empty and the new `reservation` is returned.
+///
+/// Wire response shape:
+/// ```json
+/// {
+///   "reservation": { "reservation_id": "resv_<uuid>", ... },
+///   "conflicts": []   // or array of { existing, reason, detail }
+/// }
+/// ```
 pub async fn handle_reservation_claim(
     state: AppState,
     payload: Value,
@@ -221,18 +256,22 @@ pub async fn handle_reservation_claim(
         return Err(TeamcommError::NotFound(format!("session {session_id}")));
     }
 
-    // Check for conflicts.
-    let conflicts: Vec<Reservation> = guard
-        .reservations
-        .values()
-        .filter(|r| {
-            r.path == path
-                && r.session_id != session_id
-                && r.expires_at > now
-                && mode_conflicts(mode, r.mode)
-        })
-        .cloned()
-        .collect();
+    let candidate = Candidate::from_path(path.clone(), mode);
+    let report = conflict::detect_conflicts(candidate, active_reservations(&guard, now));
+
+    if !report.is_clean() {
+        info!(
+            session_id = %session_id,
+            path = %path.display(),
+            mode = %mode_str,
+            conflict_count = report.conflicts.len(),
+            "reservation claim rejected"
+        );
+        return Ok(json!({
+            "reservation": Value::Null,
+            "conflicts": report.conflicts,
+        }));
+    }
 
     let reservation_id = mint_reservation_id();
     let reservation = Reservation {
@@ -246,15 +285,353 @@ pub async fn handle_reservation_claim(
 
     guard
         .reservations
-        .insert(reservation_id.clone(), reservation);
+        .insert(reservation_id.clone(), reservation.clone());
     drop(guard);
 
-    info!(session_id = %session_id, reservation_id = %reservation_id, path = %path.display(), "reservation claimed");
+    // Durable mirror (best-effort — failures are logged, not fatal).
+    if let Err(e) = crate::db::Store::persist_reservation(&reservation) {
+        warn!(error = %e, reservation_id = %reservation_id, "failed to persist reservation");
+    }
+
+    info!(
+        session_id = %session_id,
+        reservation_id = %reservation_id,
+        path = %path.display(),
+        mode = %mode_str,
+        ttl_sec,
+        "reservation claimed"
+    );
 
     Ok(json!({
-        "reservation_id": reservation_id,
-        "conflicts": conflicts,
+        "reservation": reservation,
+        "conflicts": [],
     }))
+}
+
+/// `reservation.claim_many` — atomically claim several paths in one call.
+///
+/// All paths must be free of conflicts; if **any** path is blocked the
+/// whole call fails and no reservations are written. The response always
+/// includes `claimed` (array of granted reservations) and `rejected`
+/// (array of `{path, conflicts}` for blocked entries). When
+/// `rejected` is non-empty, `claimed` is empty.
+pub async fn handle_reservation_claim_many(
+    state: AppState,
+    payload: Value,
+) -> Result<Value, TeamcommError> {
+    let session_id = payload
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| TeamcommError::InvalidParams("missing required field: session_id".into()))?
+        .to_string();
+
+    let paths_value = payload
+        .get("paths")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| TeamcommError::InvalidParams("missing required field: paths".into()))?;
+
+    if paths_value.is_empty() {
+        return Err(TeamcommError::InvalidParams(
+            "paths must be non-empty".into(),
+        ));
+    }
+
+    let mode_str = payload
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("write");
+    let mode = parse_reservation_mode(mode_str)?;
+
+    let ttl_sec = payload
+        .get("ttl_sec")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(600);
+
+    let paths: Vec<PathBuf> = paths_value
+        .iter()
+        .filter_map(|v| v.as_str().map(PathBuf::from))
+        .collect();
+    if paths.len() != paths_value.len() {
+        return Err(TeamcommError::InvalidParams(
+            "every element of paths must be a string".into(),
+        ));
+    }
+
+    let now = Utc::now();
+    let expires = now + chrono::Duration::seconds(ttl_sec as i64);
+
+    // First pass: probe every path under a read lock.
+    let mut rejected: Vec<Value> = Vec::new();
+    {
+        let guard = state.read().await;
+        if !guard.sessions.contains_key(&session_id) {
+            return Err(TeamcommError::NotFound(format!("session {session_id}")));
+        }
+        let active = active_reservations(&guard, now);
+        for path in &paths {
+            let candidate = Candidate::from_path(path.clone(), mode);
+            let report = conflict::detect_conflicts(candidate, active.iter().cloned());
+            if !report.is_clean() {
+                rejected.push(json!({
+                    "path": path,
+                    "conflicts": report.conflicts,
+                }));
+            }
+        }
+    }
+
+    if !rejected.is_empty() {
+        info!(
+            session_id = %session_id,
+            requested = paths.len(),
+            rejected = rejected.len(),
+            "reservation.claim_many fully rejected due to conflicts"
+        );
+        return Ok(json!({
+            "claimed": [],
+            "rejected": rejected,
+        }));
+    }
+
+    // Second pass: claim under a write lock; re-probe to close the
+    // race window between the read pass and now.
+    let mut guard = state.write().await;
+    let active = active_reservations(&guard, now);
+    for path in &paths {
+        let candidate = Candidate::from_path(path.clone(), mode);
+        let report = conflict::detect_conflicts(candidate, active.iter().cloned());
+        if !report.is_clean() {
+            return Ok(json!({
+                "claimed": [],
+                "rejected": vec![json!({
+                    "path": path,
+                    "conflicts": report.conflicts,
+                })],
+            }));
+        }
+    }
+
+    let mut claimed: Vec<Reservation> = Vec::with_capacity(paths.len());
+    for path in paths {
+        let reservation_id = mint_reservation_id();
+        let reservation = Reservation {
+            reservation_id: reservation_id.clone(),
+            session_id: session_id.clone(),
+            path: path.clone(),
+            mode,
+            acquired_at: now,
+            expires_at: expires,
+        };
+        guard
+            .reservations
+            .insert(reservation_id.clone(), reservation.clone());
+        if let Err(e) = crate::db::Store::persist_reservation(&reservation) {
+            warn!(error = %e, reservation_id = %reservation_id, "failed to persist reservation");
+        }
+        claimed.push(reservation);
+    }
+    drop(guard);
+
+    info!(
+        session_id = %session_id,
+        count = claimed.len(),
+        mode = %mode_str,
+        "reservation.claim_many succeeded"
+    );
+
+    Ok(json!({
+        "claimed": claimed,
+        "rejected": [],
+    }))
+}
+
+/// `reservation.conflicts_for_path` — read-only query.
+///
+/// Returns the list of active reservations that *would* block a claim on
+/// `path` with `mode`. Does not modify state; safe to call before
+/// deciding to issue a `claim`.
+pub async fn handle_reservation_conflicts_for_path(
+    state: AppState,
+    payload: Value,
+) -> Result<Value, TeamcommError> {
+    let path = payload
+        .get("path")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
+        .ok_or_else(|| TeamcommError::InvalidParams("missing required field: path".into()))?;
+
+    let mode_str = payload
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("write");
+    let mode = parse_reservation_mode(mode_str)?;
+
+    let guard = state.read().await;
+    let now = Utc::now();
+    let candidate = Candidate::from_path(path.clone(), mode);
+    let report: ConflictReport =
+        conflict::detect_conflicts(candidate, active_reservations(&guard, now));
+    drop(guard);
+
+    Ok(json!({
+        "path": path,
+        "mode": mode_str,
+        "conflicts": report.conflicts,
+    }))
+}
+
+/// `reservation.pattern_claim` — claim a glob pattern as a reservation.
+///
+/// The `path` field MUST contain a glob meta-character (`*`, `?`, or
+/// `[`). The daemon stores the pattern verbatim and uses it to detect
+/// conflicts with future literal-path and pattern claims.
+pub async fn handle_reservation_pattern_claim(
+    state: AppState,
+    payload: Value,
+) -> Result<Value, TeamcommError> {
+    let session_id = payload
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| TeamcommError::InvalidParams("missing required field: session_id".into()))?
+        .to_string();
+
+    let pattern = payload
+        .get("path")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
+        .ok_or_else(|| TeamcommError::InvalidParams("missing required field: path".into()))?;
+
+    let pattern_str = pattern.to_string_lossy();
+    if !(pattern_str.contains('*') || pattern_str.contains('?') || pattern_str.contains('[')) {
+        return Err(TeamcommError::InvalidParams(
+            "pattern_claim requires a glob meta-character in path".into(),
+        ));
+    }
+
+    let mode_str = payload
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("write");
+    let mode = parse_reservation_mode(mode_str)?;
+
+    let ttl_sec = payload
+        .get("ttl_sec")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(600);
+
+    let now = Utc::now();
+    let expires = now + chrono::Duration::seconds(ttl_sec as i64);
+
+    let mut guard = state.write().await;
+    if !guard.sessions.contains_key(&session_id) {
+        return Err(TeamcommError::NotFound(format!("session {session_id}")));
+    }
+
+    let candidate = Candidate::pattern(pattern.clone(), mode);
+    let report = conflict::detect_conflicts(candidate, active_reservations(&guard, now));
+
+    if !report.is_clean() {
+        info!(
+            session_id = %session_id,
+            pattern = %pattern.display(),
+            conflict_count = report.conflicts.len(),
+            "pattern claim rejected"
+        );
+        return Ok(json!({
+            "reservation": Value::Null,
+            "conflicts": report.conflicts,
+        }));
+    }
+
+    let reservation_id = mint_reservation_id();
+    let reservation = Reservation {
+        reservation_id: reservation_id.clone(),
+        session_id: session_id.clone(),
+        path: pattern.clone(),
+        mode,
+        acquired_at: now,
+        expires_at: expires,
+    };
+
+    guard
+        .reservations
+        .insert(reservation_id.clone(), reservation.clone());
+    drop(guard);
+
+    if let Err(e) = crate::db::Store::persist_reservation(&reservation) {
+        warn!(error = %e, reservation_id = %reservation_id, "failed to persist pattern reservation");
+    }
+
+    info!(
+        session_id = %session_id,
+        reservation_id = %reservation_id,
+        pattern = %pattern.display(),
+        "pattern reservation claimed"
+    );
+
+    Ok(json!({
+        "reservation": reservation,
+        "conflicts": [],
+    }))
+}
+
+/// `reservation.list_conflicts` — read-only diagnostic query.
+///
+/// Returns every overlapping pair of currently-active reservations. An
+/// overlapping pair `(a, b)` appears once (from `a`'s perspective). The
+/// caller can use this to audit the live lock state without claiming.
+pub async fn handle_reservation_list_conflicts(
+    state: AppState,
+    _payload: Value,
+) -> Result<Value, TeamcommError> {
+    let guard = state.read().await;
+    let now = Utc::now();
+    let active: Vec<Reservation> = active_reservations(&guard, now);
+    drop(guard);
+
+    let mut pairs: Vec<Value> = Vec::new();
+    for (i, a) in active.iter().enumerate() {
+        let a_str = a.path.to_string_lossy();
+        let cand = if a_str.contains('*') || a_str.contains('?') || a_str.contains('[') {
+            Candidate::pattern(a.path.clone(), a.mode)
+        } else {
+            Candidate::from_path(a.path.clone(), a.mode)
+        };
+        for b in active.iter().skip(i + 1) {
+            // Mode must be conflict-equivalent in at least one direction
+            // to count.
+            if !teamcomm_protocol::mode_conflicts(a.mode, b.mode)
+                && !teamcomm_protocol::mode_conflicts(b.mode, a.mode)
+            {
+                continue;
+            }
+            let report = conflict::detect_conflicts(cand.clone(), std::iter::once(b.clone()));
+            for c in report.conflicts {
+                pairs.push(json!({
+                    "a": a,
+                    "b": c.existing,
+                    "reason": c.reason,
+                }));
+            }
+        }
+    }
+
+    Ok(json!({ "pairs": pairs }))
+}
+
+/// Collect all currently-active (non-expired) reservations from the
+/// shared state, cloning so the caller can iterate without holding a
+/// lock reference.
+fn active_reservations(
+    guard: &crate::state::AppStateInner,
+    now: chrono::DateTime<Utc>,
+) -> Vec<Reservation> {
+    guard
+        .reservations
+        .values()
+        .filter(|r| r.expires_at > now && r.session_id != "ignored")
+        .cloned()
+        .collect()
 }
 
 /// `reservation.release` — release a reservation by id.
@@ -278,6 +655,11 @@ pub async fn handle_reservation_release(
         return Err(TeamcommError::NotFound(format!(
             "reservation {reservation_id}"
         )));
+    }
+
+    // Durable mirror.
+    if let Err(e) = crate::db::Store::global().delete_reservation(&reservation_id) {
+        warn!(error = %e, reservation_id = %reservation_id, "failed to delete reservation from store");
     }
 
     info!(reservation_id = %reservation_id, "reservation released");
@@ -640,17 +1022,6 @@ fn parse_agent_status(s: &str) -> Result<AgentStatus, TeamcommError> {
         other => Err(TeamcommError::InvalidParams(format!(
             "unknown agent status: {other}"
         ))),
-    }
-}
-
-fn mode_conflicts(new: ReservationMode, existing: ReservationMode) -> bool {
-    match new {
-        ReservationMode::Read => matches!(existing, ReservationMode::Exclusive),
-        ReservationMode::Write => matches!(
-            existing,
-            ReservationMode::Write | ReservationMode::Exclusive
-        ),
-        ReservationMode::Exclusive => true,
     }
 }
 

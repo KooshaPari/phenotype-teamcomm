@@ -63,9 +63,10 @@ pub struct ClaimRequest {
 pub struct ClaimResult {
     /// The newly acquired reservation. Present iff the claim succeeded.
     pub reservation: Reservation,
-    /// Existing reservations on the same path that blocked the claim.
-    /// Empty on success.
-    pub conflicts: Vec<Reservation>,
+    /// Existing reservations on the same path that blocked the claim,
+    /// each annotated with the [`ConflictReason`](crate::ConflictReason)
+    /// that classified the overlap. Empty on success.
+    pub conflicts: Vec<crate::Conflict>,
 }
 
 #[cfg(test)]
@@ -158,7 +159,10 @@ mod tests {
         };
         let original = ClaimResult {
             reservation: new_reservation,
-            conflicts: vec![blocking],
+            conflicts: vec![crate::Conflict::new(
+                blocking,
+                crate::ConflictReason::ExactMatch,
+            )],
         };
         let s = serde_json::to_string(&original).unwrap();
         let back: ClaimResult = serde_json::from_str(&s).unwrap();

@@ -265,18 +265,31 @@ async fn handle_connection(stream: UnixStream, state: AppState) {
     }
 }
 
-/// Dispatch a single method name to its M0 handler. Any method that is
-/// not in the M0 surface returns `MethodNotFound`.
+/// Dispatch a single method name to its handler. M0 / M1 / M2 surface.
+/// Any method that is not registered returns `MethodNotFound`.
 async fn dispatch(method: &str, params: Value, state: AppState) -> Result<Value, TeamcommError> {
     match method {
+        // M0/M1: session lifecycle
         "session.register" => handlers::handle_session_register(state, params).await,
         "session.deregister" => handlers::handle_session_deregister(state, params).await,
         "session.heartbeat" => handlers::handle_session_heartbeat(state, params).await,
         "session.list" => handlers::handle_session_list(state, params).await,
         "session.get" => handlers::handle_session_get(state, params).await,
+        // M2: reservations
         "reservation.claim" => handlers::handle_reservation_claim(state, params).await,
+        "reservation.claim_many" => handlers::handle_reservation_claim_many(state, params).await,
+        "reservation.pattern_claim" => {
+            handlers::handle_reservation_pattern_claim(state, params).await
+        }
+        "reservation.conflicts_for_path" => {
+            handlers::handle_reservation_conflicts_for_path(state, params).await
+        }
+        "reservation.list_conflicts" => {
+            handlers::handle_reservation_list_conflicts(state, params).await
+        }
         "reservation.release" => handlers::handle_reservation_release(state, params).await,
         "reservation.list" => handlers::handle_reservation_list(state, params).await,
+        // M0/M1: inbox, state, discovery
         "inbox.post" => handlers::handle_inbox_post(state, params).await,
         "inbox.list" => handlers::handle_inbox_list(state, params).await,
         "inbox.read" => handlers::handle_inbox_read(state, params).await,

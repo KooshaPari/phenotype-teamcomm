@@ -30,6 +30,7 @@ dirs = "5"
 async-trait = "0.1"
 comfy-table = "7"
 tempfile = "3"
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
