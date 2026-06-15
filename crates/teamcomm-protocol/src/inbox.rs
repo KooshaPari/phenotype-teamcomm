@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Inter-agent inbox: messages and query filters.
 
 use chrono::{DateTime, Utc};

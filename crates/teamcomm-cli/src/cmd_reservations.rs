@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `teamcomm reservations` — file/path reservation commands.
 //!
 //! These are M0 placeholders: the daemon's M0 only supports

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Integration tests for the MCP manifest embedded in the binary.
 
 use teamcomm_mcp::manifest;

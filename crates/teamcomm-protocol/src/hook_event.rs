@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Typed events emitted into the daemon hook stream.
 
 use chrono::{DateTime, Utc};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Discovery query/result types for "who else is working on what".
 
 use serde::{Deserialize, Serialize};

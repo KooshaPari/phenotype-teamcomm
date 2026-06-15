@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `teamcomm-protocol` — wire types for inter-agent coordination.
 //!
 //! M0 surface used by the daemon and its clients:

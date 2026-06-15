@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `teamcomm daemon` — local process management for the teamcomm coordinator.
 //!
 //! The `daemon` subcommand group is **local** and does not talk to a running

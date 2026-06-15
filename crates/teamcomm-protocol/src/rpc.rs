@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! JSON-RPC 2.0 envelope types used by every `phenotype-teamcomm` transport.
 //!
 //! The parameter and result payloads are intentionally typed as

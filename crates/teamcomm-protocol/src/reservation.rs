@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! File/path reservation types: claims, modes, and conflict reporting.
 
 use chrono::{DateTime, Utc};

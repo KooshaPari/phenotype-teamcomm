@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `teamcomm state` — live agent state (focus file, branch, status) commands.
 //!
 //! M0 placeholder: full support lands in M1–M3.

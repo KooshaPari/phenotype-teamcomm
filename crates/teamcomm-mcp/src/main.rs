@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! teamcomm-mcp binary — JSON-RPC 2.0 server over stdio.
 //!
 //! Wire protocol: one request per line on stdin, one response per line on

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Live agent state broadcast: what file/branch/worktree the agent is on and
 //! what it's doing.
 

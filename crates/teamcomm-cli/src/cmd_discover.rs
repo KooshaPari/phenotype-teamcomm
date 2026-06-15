@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `teamcomm discover` — discovery queries (who is working on what).
 //!
 //! M0 placeholder: full support lands in M1–M3.

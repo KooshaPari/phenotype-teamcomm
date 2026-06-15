@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! JSON-RPC 2.0 over a Unix-domain socket: write one request line, read one
 //! response line, and surface success vs. error to the caller.
 //!

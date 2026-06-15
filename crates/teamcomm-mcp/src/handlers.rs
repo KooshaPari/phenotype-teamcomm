@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! M0 stub handlers — return realistic-shaped mock responses for each tool
 //! without touching any real daemon state. The M1 implementation will replace
 //! these bodies with calls into the teamcomm client (or daemon IPC).

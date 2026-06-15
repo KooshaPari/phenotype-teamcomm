@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `teamcomm-client` — embeddable async client for talking to the teamcomm daemon.
 //!
 //! Connects over a Unix-domain socket and dispatches JSON-RPC 2.0 requests.

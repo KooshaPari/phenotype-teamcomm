@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Daemon error types and JSON-RPC error envelope conversion.
 //!
 //! M0 keeps the surface minimal: a thin `TeamcommError` enum (distinct

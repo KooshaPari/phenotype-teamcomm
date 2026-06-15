@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `teamcomm` — operator CLI for the teamcomm daemon.
 //!
 //! Connects to the running daemon over a Unix-domain socket and dispatches

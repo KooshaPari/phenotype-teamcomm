@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `teamcomm inbox` — inter-agent messaging commands.
 //!
 //! M0 placeholder: full support lands in M1–M3.

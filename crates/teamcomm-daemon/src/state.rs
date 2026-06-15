@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! In-memory daemon state for M0.
 //!
 //! M1 will replace this module's storage with a SQLite-backed

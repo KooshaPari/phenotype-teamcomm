@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Unix-socket listener and per-connection JSON-RPC dispatch loop.
 //!
 //! Wire format: one JSON-RPC 2.0 request per line on each connection,

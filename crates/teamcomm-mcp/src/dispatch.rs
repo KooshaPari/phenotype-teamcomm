@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Method dispatch — look up a JSON-RPC `method` string and call the
 //! corresponding handler. Unknown methods return a JSON-RPC 2.0 error
 //! (`code = -32601`, "method not found").

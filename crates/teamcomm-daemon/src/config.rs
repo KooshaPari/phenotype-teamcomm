@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Daemon configuration: socket/pid paths, heartbeat timeouts, log level.
 
 use std::path::{Path, PathBuf};

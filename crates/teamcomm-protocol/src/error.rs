@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Error types and JSON-RPC error-code mapping for `teamcomm-protocol`.
 //!
 //! - [`ErrorCode`] mirrors the JSON-RPC 2.0 *standard* error codes for the

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Unix-socket connection helpers.
 //!
 //! All daemon RPCs go over a Unix-domain socket. The default location is

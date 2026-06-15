@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Pretty-printing helpers used by every subcommand group.
 //!
 //! We intentionally don't bring in a strong-typed view of every daemon

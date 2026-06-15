@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! teamcomm-mcp — Model Context Protocol server exposing teamcomm primitives.
 //!
 //! M0 stub: every tool returns a mocked successful response without touching

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! JSON-RPC method handlers for M0.
 //!
 //! Each handler takes the shared [`AppState`] and the raw JSON-RPC

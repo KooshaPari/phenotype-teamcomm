@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! PID file management: write/read/remove the daemon's PID file with
 //! "refuse if a daemon is already running" semantics.
 

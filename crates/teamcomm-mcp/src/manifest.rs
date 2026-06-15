@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Manifest loader for the MCP tool catalogue.
 //!
 //! The manifest is the single source of truth for which tools the server

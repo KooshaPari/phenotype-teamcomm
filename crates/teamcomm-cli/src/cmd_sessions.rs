@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `teamcomm sessions` — list and inspect registered agent sessions.
 //!
 //! `sessions list` → `session.list` RPC, optionally in `--watch` mode that

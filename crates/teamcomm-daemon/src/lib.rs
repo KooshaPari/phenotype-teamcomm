@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `teamcomm-daemon` — long-running multi-agent coordinator.
 //!
 //! M0 scope:

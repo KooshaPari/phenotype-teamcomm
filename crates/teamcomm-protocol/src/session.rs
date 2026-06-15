@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Agent session types: identity, registration payload, and lightweight summary.
 
 use chrono::{DateTime, Utc};
