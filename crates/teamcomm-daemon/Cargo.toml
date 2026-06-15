@@ -2,9 +2,14 @@
 name = "teamcomm-daemon"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 rust-version.workspace = true
 description = "teamcomm daemon — long-running multi-agent coordinator"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KooshaPari/phenotype-teamcomm"
+documentation = "https://docs.rs/teamcomm-daemon"
+keywords = ["phenotype", "teamcomm", "teamcomm"]
+categories = ["network-programming", "system"]
+authors = ["kooshapari"]
 
 [[bin]]
 name = "teamcomm-daemon"

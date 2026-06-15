@@ -3,8 +3,13 @@ name = "teamcomm-mcp"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 description = "teamcomm MCP server — exposes coordination primitives as MCP tools"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KooshaPari/phenotype-teamcomm"
+documentation = "https://docs.rs/teamcomm-mcp"
+keywords = ["phenotype", "teamcomm", "mcp"]
+categories = ["api-bindings", "network-programming"]
+authors = ["kooshapari"]
 
 [lib]
 name = "teamcomm_mcp"

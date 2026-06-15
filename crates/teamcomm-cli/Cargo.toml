@@ -2,7 +2,13 @@
 name = "teamcomm-cli"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KooshaPari/phenotype-teamcomm"
+description = "teamcomm cli — Phenotype infrastructure crate (phenotype-teamcomm)"
+documentation = "https://docs.rs/teamcomm-cli"
+keywords = ["phenotype", "teamcomm", "teamcomm"]
+categories = ["network-programming", "command-line-utilities"]
+authors = ["kooshapari"]
 
 [[bin]]
 name = "teamcomm"
