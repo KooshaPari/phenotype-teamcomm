@@ -1,0 +1,8 @@
+[toolchain]
+# SOTA: pin the toolchain so any developer or CI runner that
+# uses rustup automatically picks up the exact compiler we ship
+# against. Bump MSRV in lockstep with Cargo.toml's
+# `[workspace.package].rust-version`.
+channel    = "1.75.0"
+profile    = "minimal"
+components = ["rustfmt", "clippy"]
