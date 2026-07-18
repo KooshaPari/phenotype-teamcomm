@@ -21,12 +21,14 @@ path = "src/main.rs"
 
 [dependencies]
 teamcomm-protocol = { path = "../teamcomm-protocol" }
-tokio = { workspace = true }
+teamcomm-client = { path = "../teamcomm-client" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-anyhow = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }

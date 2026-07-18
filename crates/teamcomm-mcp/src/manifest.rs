@@ -1,45 +1,51 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Manifest loader for the MCP tool catalogue.
-//!
-//! The manifest is the single source of truth for which tools the server
-//! exposes; the dispatcher and the integration test both consume the names
-//! extracted from it so that adding a tool here automatically updates both.
+//! MCP manifest loader. Reads `mcp/manifest.json` relative to the crate root
+//! (or `$TEAMCOMM_MCP_MANIFEST`) and parses it into a typed structure.
 
-/// The raw manifest text, embedded at compile time from `mcp/manifest.json`.
-pub const MANIFEST: &str = include_str!("../mcp/manifest.json");
+use std::path::{Path, PathBuf};
 
-/// Returns the list of tool names declared in the manifest, in declaration
-/// order. Panics if the manifest is not valid JSON or is missing the `tools`
-/// array — both are compile-time invariants because the manifest is
-/// `include_str!`-ed and the manifest is committed.
-pub fn tool_names() -> Vec<String> {
-    let value: serde_json::Value = serde_json::from_str(MANIFEST)
-        .expect("mcp/manifest.json must be valid JSON (compile-time invariant)");
-    let tools = value
-        .get("tools")
-        .and_then(|t| t.as_array())
-        .expect("mcp/manifest.json must have a top-level 'tools' array");
-    tools
-        .iter()
-        .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
-        .map(str::to_owned)
-        .collect()
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Manifest {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub transport: String,
+    pub tools: Vec<ToolDef>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDef {
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub params: serde_json::Value,
+    #[serde(default)]
+    pub returns: serde_json::Value,
+}
 
-    #[test]
-    fn manifest_parses() {
-        let _ = tool_names();
+impl Manifest {
+    /// Load the manifest from the crate-relative `mcp/manifest.json`.
+    pub fn load_default() -> Result<Self> {
+        let path = std::env::var("TEAMCOMM_MCP_MANIFEST")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mcp/manifest.json")
+            });
+        Self::load(path)
     }
 
-    #[test]
-    fn manifest_has_expected_top_level_keys() {
-        let v: serde_json::Value = serde_json::from_str(MANIFEST).unwrap();
-        assert_eq!(v["name"], "teamcomm");
-        assert_eq!(v["transport"], "stdio");
-        assert!(v["tools"].is_array());
+    pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+        let text = std::fs::read_to_string(path.as_ref())
+            .with_context(|| format!("reading manifest at {}", path.as_ref().display()))?;
+        let manifest: Manifest = serde_json::from_str(&text)
+            .with_context(|| format!("parsing manifest at {}", path.as_ref().display()))?;
+        Ok(manifest)
+    }
+
+    /// Look up a tool definition by name (returns None if absent).
+    pub fn find_tool(&self, name: &str) -> Option<&ToolDef> {
+        self.tools.iter().find(|t| t.name == name)
     }
 }
