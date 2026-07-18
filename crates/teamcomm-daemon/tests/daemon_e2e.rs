@@ -38,8 +38,6 @@
 //!
 //! `low`, `normal`, `high`, `urgent`
 
-use std::collections::HashMap;
-
 use serde_json::{json, Value};
 use teamcomm_daemon::handlers;
 use teamcomm_daemon::state::{self, AppState};
