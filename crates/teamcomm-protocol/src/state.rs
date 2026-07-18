@@ -19,6 +19,11 @@ pub enum AgentStatus {
     Blocked,
     /// The agent has finished its current task and is awaiting next input.
     Done,
+    /// The agent is internally stuck (e.g. repeated failure, lost context,
+    /// hung subtool) and needs intervention or restart. Distinct from
+    /// `Blocked` (external dependency) — `Stuck` means the agent itself
+    /// is unresponsive or in a degenerate loop.
+    Stuck,
 }
 
 /// Snapshot of an agent's current focus and status.

@@ -637,6 +637,7 @@ fn parse_agent_status(s: &str) -> Result<AgentStatus, TeamcommError> {
         "working" => Ok(AgentStatus::Working),
         "blocked" => Ok(AgentStatus::Blocked),
         "done" => Ok(AgentStatus::Done),
+        "stuck" => Ok(AgentStatus::Stuck),
         other => Err(TeamcommError::InvalidParams(format!(
             "unknown agent status: {other}"
         ))),
