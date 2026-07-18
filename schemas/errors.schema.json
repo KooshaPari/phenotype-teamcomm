@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "teamcomm://v0.1.0/errors.schema.json",
+  "title": "teamcomm error codes",
+  "description": "Numeric codes used in JSON-RPC `error.code` fields. Source of truth: crates/teamcomm-protocol/src/error.rs::ErrorCode.",
+  "type": "integer",
+  "oneOf": [
+    {
+      "const": -32700,
+      "title": "ParseError",
+      "description": "Invalid JSON was received by the server (JSON-RPC 2.0 §5.1)."
+    },
+    {
+      "const": -32600,
+      "title": "InvalidRequest",
+      "description": "The JSON sent is not a valid request object (JSON-RPC 2.0 §5.2)."
+    },
+    {
+      "const": -32601,
+      "title": "MethodNotFound",
+      "description": "The method does not exist or is not available (JSON-RPC 2.0 §5.3)."
+    },
+    {
+      "const": -32602,
+      "title": "InvalidParams",
+      "description": "Invalid method parameters (JSON-RPC 2.0 §5.4)."
+    },
+    {
+      "const": -32603,
+      "title": "InternalError",
+      "description": "Internal JSON-RPC error (JSON-RPC 2.0 §5.5)."
+    }
+  ],
+  "examples": [-32600, -32601, -32602],
+  "notes": [
+    "teamcomm currently emits only the five JSON-RPC 2.0 standard codes.",
+    "Custom codes in the application range (-32000 to -32099) are reserved for future use but not yet emitted.",
+    "Codes outside the standard range (-32768 to -32000) and the application range are rejected by the parser."
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "teamcomm://v0.1.0/jsonrpc-envelope.schema.json",
+  "title": "teamcomm JSON-RPC 2.0 envelope",
+  "description": "Frame format for all teamcomm daemon traffic. Carried line-delimited over a Unix domain socket. Source of truth: crates/teamcomm-protocol/src/rpc.rs",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/notification" },
+    { "$ref": "#/$defs/successResponse" },
+    { "$ref": "#/$defs/errorResponse" }
+  ],
+  "$defs": {
+    "request": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/rpcId" },
+        "method": {
+          "type": "string",
+          "pattern": "^[a-z]+\\.[a-z_]+$",
+          "description": "Dotted namespace.method name, e.g. 'session.register'."
+        },
+        "params": {
+          "description": "Method-specific parameters. Each method declares its own params schema under schemas/<namespace>.schema.json.",
+          "oneOf": [
+            { "type": "object" },
+            { "type": "array" }
+          ]
+        }
+      }
+    },
+    "notification": {
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": {
+          "type": "string",
+          "pattern": "^[a-z]+\\.[a-z_]+$"
+        },
+        "params": {
+          "oneOf": [
+            { "type": "object" },
+            { "type": "array" }
+          ]
+        }
+      },
+      "description": "Notifications have no `id` and produce no response. teamcomm does not currently emit unsolicited notifications."
+    },
+    "successResponse": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "result"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/rpcId" },
+        "result": {
+          "description": "Method-specific success payload. Schema lives under schemas/<namespace>.schema.json."
+        }
+      }
+    },
+    "errorResponse": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "error"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": {
+          "$ref": "#/$defs/rpcId",
+          "description": "Echoes the request id, or RpcId::Number(0) if the request id was unreadable (parse error)."
+        },
+        "error": { "$ref": "#/$defs/error" }
+      }
+    },
+    "rpcId": {
+      "description": "JSON-RPC 2.0 allows ids to be strings, numbers (without fractional parts), or null. teamcomm treats them opaquely.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "integer" },
+        { "type": "null" }
+      ]
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "description": "Numeric error code. See schemas/errors.schema.json for the catalog.",
+          "type": "integer"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "description": "Optional method-specific structured error data."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "teamcomm://v0.1.0/reservation.schema.json",
+  "title": "reservation.* methods",
+  "description": "Wire schemas for the reservation namespace. Source of truth: crates/teamcomm-protocol/src/reservation.rs + crates/teamcomm-daemon/src/handlers.rs (handle_reservation_*).",
+  "type": "object",
+  "oneOf": [
+    { "title": "reservation.claim params", "$ref": "#/$defs/claimParams" },
+    { "title": "reservation.claim result", "$ref": "#/$defs/claimResult" },
+    { "title": "reservation.release params", "$ref": "#/$defs/releaseParams" },
+    { "title": "reservation.release result", "$ref": "#/$defs/emptyResult" },
+    { "title": "reservation.list params", "$ref": "#/$defs/listParams" },
+    { "title": "reservation.list result", "$ref": "#/$defs/listResult" }
+  ],
+  "$defs": {
+    "emptyResult": {
+      "type": "null",
+      "description": "No payload on success."
+    },
+    "claimParams": {
+      "type": "object",
+      "required": ["session_id", "path", "mode", "ttl_sec"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "type": "string", "format": "uuid" },
+        "path": {
+          "type": "string",
+          "description": "Absolute or repo-relative path. Paths are normalized server-side before conflict checking."
+        },
+        "mode": { "$ref": "#/$defs/reservationMode" },
+        "ttl_sec": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "description": "Time-to-live in seconds from acquisition. Server sets expires_at = acquired_at + ttl_sec."
+        }
+      }
+    },
+    "claimResult": {
+      "type": "object",
+      "required": ["granted"],
+      "additionalProperties": false,
+      "properties": {
+        "granted": {
+          "type": "boolean",
+          "description": "True if the reservation was acquired. False when conflicts on the path block it."
+        },
+        "reservation": {
+          "oneOf": [{ "$ref": "#/$defs/reservation" }, { "type": "null" }],
+          "description": "Present and populated when granted=true; null otherwise."
+        },
+        "conflicts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/reservation" },
+          "description": "Existing reservations blocking the claim. Empty array when granted=true or when the path is unreserved."
+        }
+      }
+    },
+    "releaseParams": {
+      "type": "object",
+      "required": ["reservation_id"],
+      "additionalProperties": false,
+      "properties": {
+        "reservation_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    "listParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "If present, list only reservations owned by this session. Otherwise list all."
+        },
+        "path_prefix": {
+          "type": "string",
+          "description": "If present, list only reservations whose path starts with this prefix."
+        }
+      }
+    },
+    "listResult": {
+      "type": "object",
+      "required": ["reservations"],
+      "additionalProperties": false,
+      "properties": {
+        "reservations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/reservation" }
+        }
+      }
+    },
+    "reservation": {
+      "type": "object",
+      "required": ["reservation_id", "session_id", "path", "mode", "acquired_at", "expires_at"],
+      "additionalProperties": false,
+      "properties": {
+        "reservation_id": { "type": "string", "format": "uuid" },
+        "session_id": { "type": "string", "format": "uuid" },
+        "path": { "type": "string" },
+        "mode": { "$ref": "#/$defs/reservationMode" },
+        "acquired_at": { "$ref": "#/$defs/dateTime" },
+        "expires_at": { "$ref": "#/$defs/dateTime" }
+      }
+    },
+    "reservationMode": {
+      "type": "string",
+      "enum": ["read", "write", "exclusive"],
+      "description": [
+        "Conflict semantics:",
+        "- read: many concurrent `read` claims may coexist on the same path.",
+        "- write: exclusive among non-read claims; conflicts with other `write` and `exclusive`.",
+        "- exclusive: conflicts with everything on the same path including `read`."
+      ]
+    },
+    "dateTime": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
