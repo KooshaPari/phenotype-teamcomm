@@ -6,6 +6,7 @@ members = [
     "crates/teamcomm-daemon",
     "crates/teamcomm-cli",
     "crates/teamcomm-mcp",
+    "crates/teamcomm-smoke",
 ]
 
 [workspace.package]
