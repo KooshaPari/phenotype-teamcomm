@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "teamcomm://v0.1.0/state.schema.json",
+  "title": "state.* methods",
+  "description": "Wire schemas for the live-state namespace. Source of truth: crates/teamcomm-protocol/src/state.rs + crates/teamcomm-daemon/src/handlers.rs (handle_state_*).",
+  "type": "object",
+  "oneOf": [
+    { "title": "state.set params", "$ref": "#/$defs/setParams" },
+    { "title": "state.set result", "$ref": "#/$defs/emptyResult" },
+    { "title": "state.get params", "$ref": "#/$defs/getParams" },
+    { "title": "state.get result", "$ref": "#/$defs/liveState" }
+  ],
+  "$defs": {
+    "emptyResult": {
+      "type": "null",
+      "description": "No payload on success."
+    },
+    "setParams": {
+      "type": "object",
+      "required": ["session_id", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "type": "string", "format": "uuid" },
+        "status": { "$ref": "#/$defs/agentStatus" },
+        "focus_file": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }],
+          "description": "Path of the file the agent is currently focused on."
+        },
+        "focus_branch": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }],
+          "description": "Branch the agent is working on, if any."
+        },
+        "worktree": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }],
+          "description": "Worktree directory the agent is operating in, if any."
+        }
+      }
+    },
+    "getParams": {
+      "type": "object",
+      "required": ["session_id"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    "liveState": {
+      "type": "object",
+      "required": ["session_id", "status", "last_heartbeat"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "type": "string", "format": "uuid" },
+        "status": { "$ref": "#/$defs/agentStatus" },
+        "focus_file": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "focus_branch": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "worktree": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "last_heartbeat": { "$ref": "#/$defs/dateTime" }
+      }
+    },
+    "agentStatus": {
+      "type": "string",
+      "enum": ["idle", "working", "blocked", "done"],
+      "description": [
+        "idle: registered but not actively working on a task.",
+        "working: actively working (writing code, running tests).",
+        "blocked: waiting on a human, another agent, or a reservation.",
+        "done: finished current task, awaiting next input."
+      ]
+    },
+    "dateTime": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

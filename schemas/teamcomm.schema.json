@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "teamcomm://v0.1.0/teamcomm.schema.json",
+  "title": "Phenotype Teamcomm v0.1.0 — All Wire Methods",
+  "description": "Top-level index covering every JSON-RPC method exposed by the teamcomm daemon. Per-namespace schemas in session/reservation/inbox/state/discover.schema.json carry the per-method params/result definitions; this top-level schema enumerates method names and links to the correct namespace schema via $ref.",
+  "type": "object",
+  "oneOf": [
+    { "title": "session.register",        "$ref": "session.schema.json#/$defs/registerParams" },
+    { "title": "session.deregister",      "$ref": "session.schema.json#/$defs/deregisterParams" },
+    { "title": "session.heartbeat",       "$ref": "session.schema.json#/$defs/heartbeatParams" },
+    { "title": "session.list",            "$ref": "session.schema.json#/$defs/emptyParams" },
+    { "title": "session.get",             "$ref": "session.schema.json#/$defs/getParams" },
+    { "title": "reservation.claim",       "$ref": "reservation.schema.json#/$defs/claimParams" },
+    { "title": "reservation.release",     "$ref": "reservation.schema.json#/$defs/releaseParams" },
+    { "title": "reservation.list",        "$ref": "reservation.schema.json#/$defs/listParams" },
+    { "title": "inbox.post",              "$ref": "inbox.schema.json#/$defs/postParams" },
+    { "title": "inbox.list",              "$ref": "inbox.schema.json#/$defs/listParams" },
+    { "title": "inbox.read",              "$ref": "inbox.schema.json#/$defs/readParams" },
+    { "title": "state.set",               "$ref": "state.schema.json#/$defs/setParams" },
+    { "title": "state.get",               "$ref": "state.schema.json#/$defs/getParams" },
+    { "title": "discover.agents",         "$ref": "discover.schema.json#/$defs/queryParams" }
+  ],
+  "$defs": {
+    "allMethods": {
+      "type": "string",
+      "enum": [
+        "session.register",
+        "session.deregister",
+        "session.heartbeat",
+        "session.list",
+        "session.get",
+        "reservation.claim",
+        "reservation.release",
+        "reservation.list",
+        "inbox.post",
+        "inbox.list",
+        "inbox.read",
+        "state.set",
+        "state.get",
+        "discover.agents"
+      ],
+      "description": "Exhaustive list of every JSON-RPC method the teamcomm daemon implements."
+    },
+    "allResults": {
+      "type": "null",
+      "description": "Methods that return no payload are typed 'null'. Result-bearing methods are described in their namespace schemas."
+    }
+  }
+}

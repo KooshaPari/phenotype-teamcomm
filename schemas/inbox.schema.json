@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "teamcomm://v0.1.0/inbox.schema.json",
+  "title": "inbox.* methods",
+  "description": "Wire schemas for the inbox namespace. Source of truth: crates/teamcomm-protocol/src/inbox.rs + crates/teamcomm-daemon/src/handlers.rs (handle_inbox_*).",
+  "type": "object",
+  "oneOf": [
+    { "title": "inbox.post params", "$ref": "#/$defs/postParams" },
+    { "title": "inbox.post result", "$ref": "#/$defs/postResult" },
+    { "title": "inbox.list params", "$ref": "#/$defs/listParams" },
+    { "title": "inbox.list result", "$ref": "#/$defs/listResult" },
+    { "title": "inbox.read params", "$ref": "#/$defs/readParams" },
+    { "title": "inbox.read result", "$ref": "#/$defs/message" }
+  ],
+  "$defs": {
+    "postParams": {
+      "type": "object",
+      "required": ["from_session", "to_session", "subject", "body"],
+      "additionalProperties": false,
+      "properties": {
+        "from_session": { "type": "string", "format": "uuid" },
+        "to_session": {
+          "type": "string",
+          "description": "Recipient session id, or '*' for broadcast (interpretation daemon-defined)."
+        },
+        "subject": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "body": { "type": "string", "minLength": 1 },
+        "priority": { "$ref": "#/$defs/priority" },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "If present, attach this message to an existing thread."
+        },
+        "reply_to_message_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "If present, mark this message as a reply to the given message id."
+        }
+      }
+    },
+    "postResult": {
+      "type": "object",
+      "required": ["message_id"],
+      "additionalProperties": false,
+      "properties": {
+        "message_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Server-issued id for the new message."
+        }
+      }
+    },
+    "listParams": {
+      "type": "object",
+      "required": ["session_id"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "type": "string", "format": "uuid" },
+        "unread_only": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, only messages with read_at == null are returned."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 50,
+          "description": "Maximum number of messages to return."
+        },
+        "thread_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "If present, restrict to messages in this thread."
+        }
+      }
+    },
+    "listResult": {
+      "type": "object",
+      "required": ["messages"],
+      "additionalProperties": false,
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/message" }
+        }
+      }
+    },
+    "readParams": {
+      "type": "object",
+      "required": ["message_id"],
+      "additionalProperties": false,
+      "properties": {
+        "message_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    "message": {
+      "type": "object",
+      "required": ["message_id", "from_session", "to_session", "subject", "body", "priority", "sent_at"],
+      "additionalProperties": false,
+      "properties": {
+        "message_id": { "type": "string", "format": "uuid" },
+        "from_session": { "type": "string", "format": "uuid" },
+        "to_session": { "type": "string" },
+        "subject": { "type": "string" },
+        "body": { "type": "string" },
+        "priority": { "$ref": "#/$defs/priority" },
+        "thread_id": {
+          "oneOf": [{ "type": "string", "format": "uuid" }, { "type": "null" }]
+        },
+        "reply_to_message_id": {
+          "oneOf": [{ "type": "string", "format": "uuid" }, { "type": "null" }]
+        },
+        "sent_at": { "$ref": "#/$defs/dateTime" },
+        "read_at": {
+          "oneOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }],
+          "description": "When the recipient first marked this message read (null if unread)."
+        }
+      }
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["low", "normal", "high"],
+      "description": "low = informational, may be batched. normal = default. high = surfaced prominently, may trigger interrupt signals."
+    },
+    "dateTime": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

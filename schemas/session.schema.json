@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "teamcomm://v0.1.0/session.schema.json",
+  "title": "session.* methods",
+  "description": "Wire schemas for the session namespace. Source of truth: crates/teamcomm-protocol/src/session.rs + crates/teamcomm-daemon/src/handlers.rs (handle_session_*).",
+  "type": "object",
+  "oneOf": [
+    { "title": "session.register params", "$ref": "#/$defs/registerParams" },
+    { "title": "session.register result", "$ref": "#/$defs/registerResult" },
+    { "title": "session.deregister params", "$ref": "#/$defs/deregisterParams" },
+    { "title": "session.deregister result", "$ref": "#/$defs/emptyResult" },
+    { "title": "session.heartbeat params", "$ref": "#/$defs/heartbeatParams" },
+    { "title": "session.heartbeat result", "$ref": "#/$defs/emptyResult" },
+    { "title": "session.list params", "$ref": "#/$defs/emptyParams" },
+    { "title": "session.list result", "$ref": "#/$defs/listResult" },
+    { "title": "session.get params", "$ref": "#/$defs/getParams" },
+    { "title": "session.get result", "$ref": "#/$defs/sessionSummary" }
+  ],
+  "$defs": {
+    "emptyParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0,
+      "description": "Methods that take no parameters. Send `{}` as `params`."
+    },
+    "emptyResult": {
+      "type": "null",
+      "description": "Methods that return no payload on success."
+    },
+    "registerParams": {
+      "type": "object",
+      "required": ["agent_type", "pid", "working_dir", "capabilities"],
+      "additionalProperties": false,
+      "properties": {
+        "agent_type": { "$ref": "#/$defs/agentType" },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "OS process id of the registering agent."
+        },
+        "working_dir": {
+          "type": "string",
+          "description": "Absolute or repo-relative path. Accepted as a string for JSON portability."
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Free-form capability tags. Used by discover.agents for matching."
+        }
+      }
+    },
+    "registerResult": {
+      "type": "object",
+      "required": ["session_id", "lease_expires_at"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "description": "Server-issued session id (UUID v4)."
+        },
+        "lease_expires_at": {
+          "$ref": "#/$defs/dateTime",
+          "description": "When the session lease first expires if no heartbeat arrives."
+        }
+      }
+    },
+    "deregisterParams": {
+      "type": "object",
+      "required": ["session_id"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    "heartbeatParams": {
+      "type": "object",
+      "required": ["session_id"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "type": "string", "format": "uuid" },
+        "lease_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "description": "Optional lease extension in seconds. Server caps to its configured maximum."
+        }
+      }
+    },
+    "listResult": {
+      "type": "object",
+      "required": ["sessions"],
+      "additionalProperties": false,
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sessionSummary" }
+        }
+      }
+    },
+    "getParams": {
+      "type": "object",
+      "required": ["session_id"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    "sessionSummary": {
+      "type": "object",
+      "required": ["session_id", "agent_type", "pid", "status", "last_heartbeat"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "type": "string", "format": "uuid" },
+        "agent_type": { "$ref": "#/$defs/agentType" },
+        "pid": { "type": "integer", "minimum": 1 },
+        "status": { "$ref": "#/$defs/agentStatus" },
+        "focus_file": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }],
+          "description": "Path of the file the agent is currently focused on."
+        },
+        "last_heartbeat": { "$ref": "#/$defs/dateTime" }
+      }
+    },
+    "agentType": {
+      "type": "string",
+      "enum": ["forge", "codex", "claude", "copilot", "custom"],
+      "description": "Agent kind. `custom` is a catch-all for unknown agents; the underlying value carries the stable identifier."
+    },
+    "agentStatus": {
+      "type": "string",
+      "enum": ["idle", "working", "blocked", "done"],
+      "description": "Current status. Mirrors AgentStatus enum in crates/teamcomm-protocol/src/state.rs."
+    },
+    "dateTime": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 / ISO 8601 UTC timestamp, e.g. '2026-07-17T17:00:00Z'."
+    }
+  }
+}

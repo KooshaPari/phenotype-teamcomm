@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "teamcomm://v0.1.0/discover.schema.json",
+  "title": "discover.agents method",
+  "description": "Wire schemas for the discover namespace. Source of truth: crates/teamcomm-protocol/src/discovery.rs + crates/teamcomm-daemon/src/handlers.rs (handle_discover_agents).",
+  "type": "object",
+  "oneOf": [
+    { "title": "discover.agents params", "$ref": "#/$defs/queryParams" },
+    { "title": "discover.agents result", "$ref": "#/$defs/queryResult" }
+  ],
+  "$defs": {
+    "queryParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }],
+          "description": "Match sessions whose focus_file equals or is under this path."
+        },
+        "branch": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }],
+          "description": "Match sessions whose focus_branch equals this branch name."
+        },
+        "repo": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }],
+          "description": "Match sessions whose working_dir is in this repo root."
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Match sessions that declare ALL of these capability tags. Empty array means no capability filter.",
+          "default": []
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 100
+        }
+      }
+    },
+    "queryResult": {
+      "type": "object",
+      "required": ["sessions"],
+      "additionalProperties": false,
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sessionSummary" },
+          "description": "Matching sessions in daemon-defined order."
+        }
+      }
+    },
+    "sessionSummary": {
+      "type": "object",
+      "required": ["session_id", "agent_type", "pid", "status", "last_heartbeat"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "type": "string", "format": "uuid" },
+        "agent_type": {
+          "type": "string",
+          "enum": ["forge", "codex", "claude", "copilot", "custom"]
+        },
+        "pid": { "type": "integer", "minimum": 1 },
+        "status": {
+          "type": "string",
+          "enum": ["idle", "working", "blocked", "done"]
+        },
+        "focus_file": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "last_heartbeat": { "$ref": "#/$defs/dateTime" }
+      }
+    },
+    "dateTime": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
