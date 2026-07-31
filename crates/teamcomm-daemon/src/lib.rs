@@ -24,6 +24,7 @@
 
 pub mod config;
 pub mod error;
+pub mod db;
 pub mod handlers;
 pub mod listener;
 pub mod pid;
